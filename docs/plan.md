@@ -71,7 +71,7 @@ Specs first, then structure, then build. Implementation approved and started on 
 2. ~~Prompt agent function tools + JSON-schema output~~: works in Azure.
 
 ## Next steps
-1. CI: push to GitHub, run `scripts/setup_ci.py`, first workflow run; decide how CI gets a user token for smoke/evals (`VERIFY_TOKEN`); add the `CUSTOMER_DENYLIST` secret; add mypy.
+1. CI: pushed to GitHub (CI workflow green; Deploy skipped until set up); run `scripts/setup_ci.py`, first deploy run; decide how CI gets a user token for smoke/evals (`VERIFY_TOKEN`); add the `CUSTOMER_DENYLIST` secret; add mypy.
 2. Prove the from-scratch install in a fresh environment by following `AGENTS.md` (`azd env new` + `azd up --no-prompt`), then `azd down --purge`; automate app-registration cleanup (a `postdown` hook) so teardown has no manual step.
 3. Evals: add custom judges that understand refusals/clarifications (built-in judges reward fulfilling any request); grow the golden set from production traces.
 4. Remove the tracing workaround when azure-ai-projects checks `is_recording()` itself.
