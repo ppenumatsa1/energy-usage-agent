@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python (ruff + pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Throwaway CI-only database in the service container above.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install
+        run: uv sync --all-packages --frozen
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Tests
+        run: uv run pytest
+
+  frontend:
+    name: Frontend (lint + build + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+
+  bicep:
+    name: Bicep build + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bicep
+        run: az bicep install
+
+      - name: Build
+        run: az bicep build --file infra/main.bicep --stdout > /dev/null
+
+      - name: Lint
+        run: az bicep lint --file infra/main.bicep
+
+  no-customer-info:
+    name: No customer information
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The denylist lives only in the CUSTOMER_DENYLIST secret (newline-separated terms).
+      # It is never written to the repo or the workspace, and matched terms are never printed.
+      - name: Scan tracked files against the denylist
+        shell: bash
+        env:
+          CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+        run: |
+          if [ -z "${CUSTOMER_DENYLIST//[[:space:]]/}" ]; then
+            echo "::notice::CUSTOMER_DENYLIST is not set (e.g. fork PR); skipping the check."
+            exit 0
+          fi
+          # Drop CRs and blank lines: an empty pattern would match every line.
+          patterns() { printf '%s\n' "$CUSTOMER_DENYLIST" | tr -d '\r' | sed '/^[[:space:]]*$/d'; }
+          set +e
+          matches=$(git grep -l -i -F -f <(patterns) -- . )
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "::error::Denylisted customer information found in these files:"
+            printf '%s\n' "$matches"
+            exit 1
+          elif [ "$status" -ne 1 ]; then
+            echo "::error::git grep failed (exit $status)."
+            exit "$status"
+          fi
+          echo "No denylisted terms found."

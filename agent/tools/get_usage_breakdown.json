@@ -1,0 +1,43 @@
+{
+  "name": "get_usage_breakdown",
+  "description": "Usage split by site or meter: totals with share %, or a per-period series per group.",
+  "parameters": {
+    "properties": {
+      "start": {
+        "description": "Period start. Local date (customer time zone): YYYY-MM-DD, YYYY-MM, or a server-resolved keyword: today, yesterday, this_week, last_week, this_month, last_month, this_year, last_year, last_7_days, last_30_days, last_90_days, last_12_months. A keyword as start means the period start; as end, the period end.",
+        "maxLength": 20,
+        "type": "string"
+      },
+      "end": {
+        "description": "Period end, inclusive. Same formats as start.",
+        "maxLength": 20,
+        "type": "string"
+      },
+      "group_by": {
+        "default": "site",
+        "description": "Group by site or meter.",
+        "enum": [
+          "site",
+          "meter"
+        ],
+        "type": "string"
+      },
+      "granularity": {
+        "default": "total",
+        "description": "total = one row per group.",
+        "enum": [
+          "total",
+          "day",
+          "month"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "start",
+      "end"
+    ],
+    "type": "object",
+    "additionalProperties": false
+  }
+}

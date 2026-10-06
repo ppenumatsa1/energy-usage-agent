@@ -1,0 +1,47 @@
+// Trace completeness: does every chat turn produce one connected distributed trace?
+// Run in the Application Insights "Logs" blade (classic table names).
+// A complete tool-using turn has: app-api request -> app-api dependency to energy-service
+// -> energy-service request -> energy-service dependency to Postgres, all sharing operation_Id.
+// cloud_RoleName comes from the OpenTelemetry service.name; adjust below if yours differ.
+let lookback = 24h;
+let appApiRole = "app-api";
+let energyRole = "energy-service";
+let chatTurns = requests
+    | where timestamp > ago(lookback)
+    | where cloud_RoleName == appApiRole and name has "/api/chat"
+    | project operation_Id, turnTime = timestamp, turnResult = resultCode, turnDurationMs = duration;
+let toolCalls = traces
+    | where timestamp > ago(lookback)
+    | where tostring(customDimensions.event) == "tool_call"
+    | summarize toolCallEvents = count() by operation_Id;
+let appToEnergy = dependencies
+    | where timestamp > ago(lookback)
+    | where cloud_RoleName == appApiRole
+    | where target has energyRole or name has "/mcp" or name has "/v1/"
+    | summarize energyDependencies = count() by operation_Id;
+let energyRequests = requests
+    | where timestamp > ago(lookback)
+    | where cloud_RoleName == energyRole
+    | summarize energyRequests = count() by operation_Id;
+let dbCalls = dependencies
+    | where timestamp > ago(lookback)
+    | where cloud_RoleName == energyRole
+    | where type has "postgres" or type has "SQL"
+    | summarize dbDependencies = count() by operation_Id;
+chatTurns
+| join kind=leftouter toolCalls on operation_Id
+| join kind=leftouter appToEnergy on operation_Id
+| join kind=leftouter energyRequests on operation_Id
+| join kind=leftouter dbCalls on operation_Id
+| extend
+    toolCallEvents = coalesce(toolCallEvents, 0),
+    energyDependencies = coalesce(energyDependencies, 0),
+    energyRequests = coalesce(energyRequests, 0),
+    dbDependencies = coalesce(dbDependencies, 0)
+| extend status = case(
+    energyDependencies == 0 and toolCallEvents == 0, "no_tool_calls",
+    energyDependencies > 0 and energyRequests == 0, "broken: energy-service span missing (traceparent not propagated?)",
+    energyRequests > 0 and dbDependencies == 0, "broken: db span missing",
+    "complete")
+| summarize turns = count(), sampleOperationIds = make_list(operation_Id, 5) by status
+| order by turns desc

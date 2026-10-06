@@ -1,0 +1,7 @@
+# Local overlay for Foundry skills. Deployment values (endpoint, agent version) come from `azd env get-values`.
+defaultEnvironment: dev
+environments:
+  dev:
+    azd:
+      environmentName: dev
+    evaluationSuites: []

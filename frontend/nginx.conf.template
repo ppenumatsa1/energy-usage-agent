@@ -1,0 +1,57 @@
+# Rendered at container start by the nginx image's envsubst step
+# (/etc/nginx/templates/default.conf.template -> /etc/nginx/conf.d/default.conf).
+# Only the APP_API_URL variable is substituted; nginx runtime variables ($uri, $host, ...) are left as-is.
+
+server {
+    listen 8080;
+    listen [::]:8080;
+    server_name _;
+    server_tokens off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Security headers (server level; locations below must not use add_header so these are inherited).
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://login.microsoftonline.com; frame-src 'self' https://login.microsoftonline.com; form-action 'self' https://login.microsoftonline.com; base-uri 'self'; object-src 'none'; frame-ancestors 'none'" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header X-Frame-Options "DENY" always;
+
+    # App API reverse proxy. The /api prefix is kept (no URI part on proxy_pass).
+    location /api/ {
+        proxy_pass ${APP_API_URL};
+        proxy_http_version 1.1;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header Connection "";
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_ssl_server_name on;
+
+        # Server-sent events: stream through without buffering.
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        client_max_body_size 64k;
+    }
+
+    # Generated at container start by /docker-entrypoint.d/40-config-json.sh.
+    location = /config.json {
+        expires -1;
+        try_files /config.json =404;
+    }
+
+    location /assets/ {
+        expires 1y;
+        try_files $uri =404;
+    }
+
+    location = /index.html {
+        expires -1;
+    }
+
+    # SPA history fallback.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

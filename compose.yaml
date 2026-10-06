@@ -1,0 +1,57 @@
+# Docker alternative to scripts/dev.py. Synthetic data and local-only credentials.
+#   docker compose up -d postgres
+#   uv run python scripts/migrate.py --database-url postgresql://postgres:postgres@localhost:5432/postgres
+#   uv run python scripts/seed.py    --database-url postgresql://postgres:postgres@localhost:5432/postgres
+#   DEV_JWT_SECRET=$(openssl rand -hex 32) docker compose --profile full up --build    # web on :8080
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 10
+
+  energy-service:
+    profiles: [full]
+    build: { context: ., dockerfile: services/energy-service/Dockerfile }
+    environment:
+      ENVIRONMENT: local
+      AUTH_MODE: dev
+      DEV_JWT_SECRET: ${DEV_JWT_SECRET:?set DEV_JWT_SECRET}
+      AUTH_AUDIENCE: energy-service
+      DATABASE_URL: postgresql://energy_app:local-dev-only@postgres:5432/postgres
+    depends_on: { postgres: { condition: service_healthy } }
+    ports: ["8001:8000"]
+
+  app-api:
+    profiles: [full]
+    build: { context: ., dockerfile: services/app-api/Dockerfile }
+    environment:
+      ENVIRONMENT: local
+      AUTH_MODE: dev
+      DEV_JWT_SECRET: ${DEV_JWT_SECRET:?set DEV_JWT_SECRET}
+      AUTH_AUDIENCE: app-api
+      AGENT_MODE: fake
+      OBO_CREDENTIAL: dev
+      ENERGY_SERVICE_URL: http://energy-service:8000
+      APP_DATABASE_URL: postgresql://app_api_app:local-dev-only@postgres:5432/postgres
+    depends_on: [energy-service]
+    ports: ["8000:8000"]
+
+  web:
+    profiles: [full]
+    build: { context: frontend }
+    environment:
+      APP_API_URL: http://app-api:8000
+      AUTH_MODE: dev
+    depends_on: [app-api]
+    ports: ["8080:8080"]
+
+volumes:
+  pgdata:

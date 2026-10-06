@@ -1,0 +1,23 @@
+# Evaluation intent (local). Not proof that a Foundry evaluation suite exists.
+name: energy-usage-agent-golden
+agent:
+  name: energy-usage-agent
+dataset:
+  local_uri: evals/datasets/golden.jsonl
+evaluators:
+  - builtin.tool_call_accuracy
+  - builtin.intent_resolution
+  - builtin.task_adherence
+options:
+  pass_threshold: 0.8
+# scripts/run_evals.py --mode auto: run the full eval (all rows + Foundry judges, ~5.5 min) only when
+# these files changed since the last passing full run; otherwise run the `smoke`-tagged rows (~20 s).
+policy:
+  full_when_changed:
+    - agent/agent.yaml
+    - agent/instructions.md
+    - agent/output-schema.json
+    - agent/tools/*.json
+    - agent/eval.yaml
+    - agent/evals/datasets/*.jsonl
+    - services/app-api/src/energy_usage_app_api/orchestration/**/*.py

@@ -1,0 +1,9 @@
+{
+  "name": "list_sites_and_meters",
+  "description": "The signed-in customer's sites and meters with their IDs.",
+  "parameters": {
+    "properties": {},
+    "type": "object",
+    "additionalProperties": false
+  }
+}

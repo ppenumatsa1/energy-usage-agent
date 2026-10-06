@@ -1,0 +1,29 @@
+// Tool latency and outcomes from the energy-service audit events (event == "tool_call").
+// Fields: tool, outcome, latency_ms, row_count, correlation_id.
+let lookback = 24h;
+let toolCalls = traces
+    | where timestamp > ago(lookback)
+    | where tostring(customDimensions.event) == "tool_call"
+    | extend
+        tool = tostring(customDimensions.tool),
+        outcome = tostring(customDimensions.outcome),
+        latencyMs = todouble(customDimensions.latency_ms),
+        rowCount = toint(customDimensions.row_count),
+        correlationId = tostring(customDimensions.correlation_id);
+// Main query: per-tool volume, failure rate, latency percentiles and result size.
+// Variants: replace everything from "toolCalls" below with
+//   p95 trend:      toolCalls | summarize p95Ms = percentile(latencyMs, 95) by bin(timestamp, 15m), tool | render timechart
+//   slowest calls:  toolCalls | top 20 by latencyMs desc
+//                   | project timestamp, tool, outcome, latencyMs, rowCount, correlationId, operation_Id
+toolCalls
+| summarize
+    calls = count(),
+    failures = countif(outcome != "ok" and outcome != "success"),
+    p50Ms = percentile(latencyMs, 50),
+    p95Ms = percentile(latencyMs, 95),
+    p99Ms = percentile(latencyMs, 99),
+    maxMs = max(latencyMs),
+    avgRows = avg(rowCount)
+    by tool
+| extend failureRatePct = round(100.0 * failures / calls, 2)
+| order by p95Ms desc

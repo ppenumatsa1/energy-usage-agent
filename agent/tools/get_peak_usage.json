@@ -1,0 +1,50 @@
+{
+  "name": "get_peak_usage",
+  "description": "Highest (max) or lowest (min) usage periods, ranked.",
+  "parameters": {
+    "properties": {
+      "start": {
+        "description": "Period start. Local date (customer time zone): YYYY-MM-DD, YYYY-MM, or a server-resolved keyword: today, yesterday, this_week, last_week, this_month, last_month, this_year, last_year, last_7_days, last_30_days, last_90_days, last_12_months. A keyword as start means the period start; as end, the period end.",
+        "maxLength": 20,
+        "type": "string"
+      },
+      "end": {
+        "description": "Period end, inclusive. Same formats as start.",
+        "maxLength": 20,
+        "type": "string"
+      },
+      "granularity": {
+        "default": "day",
+        "description": "Bucket size. hour is allowed for ranges up to 31 days.",
+        "enum": [
+          "hour",
+          "day",
+          "month"
+        ],
+        "type": "string"
+      },
+      "top_n": {
+        "default": 5,
+        "description": "How many periods to return (1-10).",
+        "maximum": 10,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "order": {
+        "default": "max",
+        "description": "max = highest, min = lowest.",
+        "enum": [
+          "max",
+          "min"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "start",
+      "end"
+    ],
+    "type": "object",
+    "additionalProperties": false
+  }
+}

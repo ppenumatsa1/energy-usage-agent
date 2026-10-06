@@ -1,0 +1,80 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: energy-usage-agent
+
+infra:
+  provider: bicep
+  path: infra
+
+services:
+  web:
+    project: ./frontend
+    host: containerapp
+    language: docker
+    docker:
+      path: Dockerfile
+      context: .
+      remoteBuild: true
+
+  app-api:
+    project: ./services/app-api
+    host: containerapp
+    language: docker
+    docker:
+      path: Dockerfile
+      # Repo root: the image needs the uv workspace (root pyproject.toml, uv.lock, shared/).
+      context: ../..
+      remoteBuild: true
+
+  energy-service:
+    project: ./services/energy-service
+    host: containerapp
+    language: docker
+    docker:
+      path: Dockerfile
+      # Repo root: the image needs the uv workspace (root pyproject.toml, uv.lock, shared/).
+      context: ../..
+      remoteBuild: true
+
+hooks:
+  # Checks the deployer can create app registrations and has model quota; fills AZURE_PRINCIPAL_NAME/TYPE and
+  # CLIENT_IP_ADDRESS (Postgres firewall) in the azd env. Nothing to set by hand.
+  preprovision:
+    posix:
+      shell: sh
+      run: uv run python scripts/preflight.py
+      interactive: false
+      continueOnError: false
+    windows:
+      shell: pwsh
+      run: uv run python scripts/preflight.py
+      interactive: false
+      continueOnError: false
+
+  # Schema/RLS/roles, synthetic seed data (incremental) and, for a signed-in user, a mapping to the first
+  # synthetic customer. Runs from the deployer's machine or CI runner (the deployer is the Postgres Entra admin).
+  postprovision:
+    posix:
+      shell: sh
+      run: uv run python scripts/migrate.py --azure && uv run python scripts/seed.py --azure && uv run python scripts/map_user.py --me --azure
+      interactive: false
+      continueOnError: false
+    windows:
+      shell: pwsh
+      run: uv run python scripts/migrate.py --azure; if ($LASTEXITCODE -eq 0) { uv run python scripts/seed.py --azure }; if ($LASTEXITCODE -eq 0) { uv run python scripts/map_user.py --me --azure }
+      interactive: false
+      continueOnError: false
+
+  # Creates or updates the Foundry prompt agent version from agent/, then verifies the deployment
+  # (endpoints, smoke, evals, App Insights trace). See scripts/verify_deployment.py.
+  postdeploy:
+    posix:
+      shell: sh
+      run: uv run python scripts/deploy_agent.py && uv run python scripts/verify_deployment.py
+      interactive: false
+      continueOnError: false
+    windows:
+      shell: pwsh
+      run: uv run python scripts/deploy_agent.py; if ($LASTEXITCODE -eq 0) { uv run python scripts/verify_deployment.py }
+      interactive: false
+      continueOnError: false

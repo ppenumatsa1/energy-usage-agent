@@ -1,0 +1,82 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-${{ vars.AZURE_ENV_NAME }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Skipped until scripts/setup_ci.py has set the repository variables (also keeps forks green).
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_ENV_NAME: ${{ vars.AZURE_ENV_NAME }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Option B: CI deploys code; infra (Bicep, app registrations) is applied by a person with `azd up`.
+      # New code may need the new infra, so a push that changes infra stops here. `azd up` deploys that code too;
+      # a manual run (workflow_dispatch) skips this check.
+      - name: Stop on infra changes
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base="$BEFORE"
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then base="HEAD~1"; fi
+          if git diff --name-only "$base" HEAD 2>/dev/null | grep -qE '^(infra/|azure\.yaml$)'; then
+            echo "::error::This push changes infra/ or azure.yaml. CI deploys code only: run 'azd up' (provisions and deploys this code)."
+            exit 1
+          fi
+
+      - uses: Azure/setup-azd@v2
+
+      # The postdeploy hook (deploy_agent, verify) runs Python through uv.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      # Gives the hook scripts an Azure CLI credential in addition to azd's.
+      - name: Azure CLI login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: azd login (OIDC)
+        run: |
+          azd auth login \
+            --client-id "$AZURE_CLIENT_ID" \
+            --federated-credential-provider github \
+            --tenant-id "$AZURE_TENANT_ID"
+          # verify_deployment.py queries App Insights through an az extension.
+          az config set extension.use_dynamic_install=yes_without_prompt
+
+      # Reads the outputs of the last `azd up` (endpoints, registry, app IDs) into a fresh azd env.
+      - name: Load azd environment
+        run: |
+          azd env new "$AZURE_ENV_NAME" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --location "$AZURE_LOCATION" \
+            --no-prompt
+          azd env refresh --no-prompt
+
+      # postdeploy hook: publishes the agent version (when changed), then scripts/verify_deployment.py.
+      - name: Deploy and verify
+        run: azd deploy --no-prompt

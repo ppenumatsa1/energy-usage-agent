@@ -1,0 +1,64 @@
+{
+  "name": "compare_usage",
+  "description": "Compare usage between two periods. period_a is the focus period, period_b the baseline; delta = A - B. Partial periods (e.g. month-to-date) are compared like-for-like.",
+  "parameters": {
+    "properties": {
+      "period_a": {
+        "additionalProperties": false,
+        "properties": {
+          "start": {
+            "description": "Period start. Local date (customer time zone): YYYY-MM-DD, YYYY-MM, or a server-resolved keyword: today, yesterday, this_week, last_week, this_month, last_month, this_year, last_year, last_7_days, last_30_days, last_90_days, last_12_months. A keyword as start means the period start; as end, the period end.",
+            "maxLength": 20,
+            "type": "string"
+          },
+          "end": {
+            "description": "Period end, inclusive. Same formats as start.",
+            "maxLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
+      "period_b": {
+        "additionalProperties": false,
+        "properties": {
+          "start": {
+            "description": "Period start. Local date (customer time zone): YYYY-MM-DD, YYYY-MM, or a server-resolved keyword: today, yesterday, this_week, last_week, this_month, last_month, this_year, last_year, last_7_days, last_30_days, last_90_days, last_12_months. A keyword as start means the period start; as end, the period end.",
+            "maxLength": 20,
+            "type": "string"
+          },
+          "end": {
+            "description": "Period end, inclusive. Same formats as start.",
+            "maxLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
+      "granularity": {
+        "default": "day",
+        "description": "Bucket size. hour is allowed for ranges up to 31 days.",
+        "enum": [
+          "hour",
+          "day",
+          "month"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "period_a",
+      "period_b"
+    ],
+    "type": "object",
+    "additionalProperties": false
+  }
+}

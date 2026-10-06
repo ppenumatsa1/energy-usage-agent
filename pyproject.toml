@@ -1,0 +1,51 @@
+[project]
+name = "energy-usage-agent"
+version = "0.1.0"
+description = "Workspace root for the energy usage agent POC"
+requires-python = ">=3.12"
+dependencies = ["energy-usage-shared", "energy-usage-app-api", "energy-usage-energy-service"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+energy-usage-shared = { workspace = true }
+energy-usage-app-api = { workspace = true }
+energy-usage-energy-service = { workspace = true }
+
+[tool.uv.workspace]
+members = ["shared", "services/app-api", "services/energy-service"]
+
+[dependency-groups]
+dev = [
+    "jsonschema>=4.26.0",
+    "mypy>=1.11",
+    "pgserver>=0.1.4",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "pyyaml>=6.0.3",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["frontend", "infra"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
+ignore = ["S101", "B008", "E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["energy_usage_shared", "energy_usage_energy", "energy_usage_app_api"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S105", "S106", "S108", "S311"]
+"scripts/**" = ["S311", "S603", "S607"]
+"**/testing/synthetic.py" = ["S311"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["shared/tests", "services/energy-service/tests", "services/app-api/tests", "tests"]
+addopts = "--import-mode=importlib"

@@ -1,0 +1,32 @@
+// Authorization denials: audit events (event == "authz_denied") plus raw 401/403 responses.
+// Spikes in a single reason usually mean a config problem (audience, scope, tenant allow-list,
+// onboarding mapping); a steady trickle of not_onboarded is expected for new users.
+let lookback = 7d;
+let auditDenials = traces
+    | where timestamp > ago(lookback)
+    | where tostring(customDimensions.event) == "authz_denied"
+    | extend
+        reason = tostring(customDimensions.reason),
+        correlationId = tostring(customDimensions.correlation_id)
+    | project timestamp, service = cloud_RoleName, reason, correlationId, operation_Id;
+// Main query: HTTP 401/403 by service and route, with how many carried an audit event (expect all),
+// plus the audit reasons seen for those responses.
+// Variant (denials by reason, hourly): replace everything below with
+//   auditDenials
+//   | summarize denials = count(), sampleCorrelationIds = make_set(correlationId, 5)
+//       by bin(timestamp, 1h), service, reason
+//   | order by timestamp desc, denials desc
+requests
+| where timestamp > ago(lookback)
+| where resultCode in ("401", "403")
+| join kind=leftouter (
+    auditDenials
+    | summarize auditEvents = count(), turnReasons = strcat_array(make_set(reason), ",") by operation_Id
+    ) on operation_Id
+| summarize
+    responses = count(),
+    withAuditEvent = countif(coalesce(auditEvents, 0) > 0),
+    reasons = make_set_if(turnReasons, isnotempty(turnReasons))
+    by service = cloud_RoleName, route = name, resultCode
+| extend missingAudit = responses - withAuditEvent
+| order by responses desc

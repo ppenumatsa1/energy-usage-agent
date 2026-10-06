@@ -1,0 +1,35 @@
+# Local state (database files, URLs, secrets) – never commit
+.local/
+.env
+.env.*
+!.env.example
+.azure/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+
+# Node / frontend
+node_modules/
+dist/
+frontend/test-results/
+frontend/playwright-report/
+
+# Foundry eval caches and results (agent definition files are committed)
+agent/.foundry/results/
+agent/.foundry/datasets/
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# Logs can hold identifiers, endpoints or tokens
+*.log

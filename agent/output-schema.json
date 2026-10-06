@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["answer", "status", "chart", "result_ids"],
+  "properties": {
+    "answer": { "type": "string", "description": "Short plain-language answer for the user." },
+    "status": { "type": "string", "enum": ["ok", "no_data", "clarify", "refused"] },
+    "chart": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "x", "y", "series", "title"],
+          "properties": {
+            "type": { "type": "string", "enum": ["line", "bar"] },
+            "x": { "type": "string", "description": "Column key for the x axis." },
+            "y": { "type": "array", "items": { "type": "string" }, "description": "Numeric column key(s)." },
+            "series": { "type": ["string", "null"], "description": "Column that splits rows into series, e.g. group." },
+            "title": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "result_ids": { "type": "array", "items": { "type": "string" } }
+  }
+}
