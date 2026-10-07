@@ -12,11 +12,11 @@ How a person signs in, how their identity travels to the data, and which token i
 1. **Sign-in.** The browser (MSAL, authority `https://login.microsoftonline.com/<home tenant>`) asks for `api://<app-api>/Chat.Ask`. A guest signs in with their own organization's password and MFA; Entra still issues a home-tenant token.
    → **Token A**: audience app-api, scope `Chat.Ask`, `tid` = home tenant, `oid` = the user's object in the home tenant (for a guest, the guest object, not their account in their own organization).
 2. **Call the API.** The browser sends Token A to same-origin `/api`. The web app's nginx proxies it to the internal app-api.
-3. **app-api validates Token A**: signature (home tenant keys), issuer = home tenant, audience, `tid` = `AUTH_TENANT_ID`, scope `Chat.Ask`, and that it is a user token (app-only tokens are rejected).
+3. **app-api validates Token A**: signature (home tenant keys), issuer = home tenant, audience, `tid` = `AUTH_TENANT_ID`, scope `Chat.Ask`, the calling client (`azp`) is in `AUTH_ALLOWED_CLIENT_IDS`, and that it is a user token (app-only tokens are rejected).
 4. **Token exchange (OBO).** app-api asks Entra for `api://<energy-service>/Energy.Read` on behalf of the user. It sends Token A as the assertion and proves its own identity with a managed-identity token (`api://AzureADTokenExchange`) instead of a secret.
    → **Token B**: audience energy-service, scope `Energy.Read`, same `tid` and `oid`. Cached per user until 2 minutes before expiry.
 5. **Agent.** app-api calls Foundry with its **managed identity**. Foundry gets the message and trimmed tool results, never a user token or a customer ID.
-6. **Tools.** When the agent asks for a tool, app-api calls energy-service (`/mcp`, and `/v1/me` for the profile) with Token B. energy-service validates it like step 3 (scope `Energy.Read`).
+6. **Tools.** When the agent asks for a tool, app-api calls energy-service (`/mcp`, and `/v1/me` for the profile) with Token B. energy-service validates it like step 3 (scope `Energy.Read`, client app-api).
 7. **Data.** energy-service maps `(tid, oid)` to a customer, sets the RLS customer for the transaction and queries Postgres with its **managed identity** (SELECT-only role; RLS applies).
 
 ## Tokens and credentials
@@ -58,6 +58,7 @@ How a person signs in, how their identity travels to the data, and which token i
 | `ENTRA_CLIENT_ID`, `API_SCOPE` | web | web app ID, `api://<home tenant>/<app-api>/Chat.Ask` |
 | `AUTH_TENANT_ID` | app-api, energy-service | home tenant (`tenant().tenantId`) |
 | `AUTH_AUDIENCE`, `AUTH_REQUIRED_SCOPE` | app-api, energy-service | own app ID; `Chat.Ask` / `Energy.Read` |
+| `AUTH_ALLOWED_CLIENT_IDS` | app-api, energy-service | app-api: web app ID (+ Azure CLI when `ENTRA_PREAUTHORIZE_AZURE_CLI` is `true`); energy-service: app-api app ID |
 | `ENTRA_CLIENT_ID`, `ENERGY_SERVICE_SCOPE`, `AZURE_CLIENT_ID` | app-api | app-api app ID, `api://<home tenant>/<energy-service>/Energy.Read`, managed identity client ID |
 
 Tenant and app IDs live only in the azd env and Azure, never in the repo.

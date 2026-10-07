@@ -142,6 +142,7 @@ Prerequisites:
 - Rights to create Entra app registrations (allowed for users in most tenants).
 - Quota for the model (default `gpt-5.6-luna`, GlobalStandard).
 - [azd](https://learn.microsoft.com/azure/developer/azure-developer-cli/), Azure CLI, uv. No Docker: images are built in Azure Container Registry.
+- Sign in to `az` and `azd` with the same user account and tenant (`--tenant <id>` if you have several). Service principals can't provision; preflight refuses.
 
 From zero, a person or a coding agent runs:
 ```sh
@@ -182,7 +183,8 @@ CI/CD (GitHub Actions, OIDC, no secrets, no admin):
 Day-2 changes (measured on dev):
 | Change | Command | Time |
 |---|---|---|
-| Infra | `azd provision` | ~6 min |
+| Infra only | `azd provision` | ~6 min |
+| Infra + code that needs it (new settings) | `azd up` | ~14 min |
 | Code, all services | `uv run python scripts/deploy_parallel.py` | ~2 min |
 | Code, one service | `azd deploy <service>` | 1–3 min |
 | Agent definition | `uv run python scripts/deploy_agent.py` (skips when unchanged) | ~2 s |

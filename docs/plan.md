@@ -2,7 +2,7 @@
 
 # energy-usage-agent – Plan (living document)
 
-_Last updated: 2026-10-06 — v0.5 (deployed to Azure dev)_
+_Last updated: 2026-10-07 — v0.5 (deployed to Azure dev; review fixes done)_
 
 ## Context
 - Goal: authenticated users ask natural-language questions about their energy usage and get text + table + chart.
