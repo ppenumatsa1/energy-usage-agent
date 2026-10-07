@@ -1,11 +1,15 @@
+import asyncio
 import json
 from types import SimpleNamespace as NS
 from typing import Any
 
+import httpx
+import openai
 import pytest
 
 from energy_usage_app_api.application.errors import AgentLoopLimit, UpstreamUnavailable
 from energy_usage_app_api.application.models import ToolCall
+from energy_usage_app_api.orchestration import foundry
 from energy_usage_app_api.orchestration.foundry import (
     MAX_ROWS_TO_MODEL,
     FoundryAgentRunner,
@@ -29,12 +33,23 @@ class FakeOpenAI:
     def __init__(self, responses: list[NS | Exception]) -> None:
         self._responses = responses
         self.requests: list[dict[str, Any]] = []
-        self.conversations = NS(create=self._create_conv, delete=self._delete_conv)
+        self.items = NS(create=self._add_items)
+        self.conversations = NS(create=self._create_conv, delete=self._delete_conv, items=self.items)
         self.responses = NS(create=self._create)
         self.deleted: list[str] = []
+        self.added: list[tuple[str, list[dict[str, Any]]]] = []
+        self.created = 0
+
+    def with_options(self, **_kw: Any) -> "FakeOpenAI":
+        return self
 
     async def _create_conv(self) -> NS:
-        return NS(id="conv_1")
+        self.created += 1
+        return NS(id=f"conv_{self.created}")
+
+    async def _add_items(self, conversation: str, *, items: list[dict[str, Any]]) -> NS:
+        self.added.append((conversation, items))
+        return NS(data=items)
 
     async def _delete_conv(self, cid: str) -> None:
         self.deleted.append(cid)
@@ -72,10 +87,124 @@ async def test_function_call_loop(gateway) -> None:  # type: ignore[no-untyped-d
     assert json.loads(out["output"])["result_id"] == "r_daily"
 
 
-async def test_loop_limit(gateway) -> None:  # type: ignore[no-untyped-def]
-    looping = [NS(output=[_fc("get_usage", {})], output_text="") for _ in range(3)]
-    with pytest.raises(AgentLoopLimit):
-        await FoundryAgentRunner(FakeOpenAI(looping), "a", 2).run_turn("q", "conv_9", gateway, _noop)
+def _aborted(fake: FakeOpenAI) -> list[tuple[str, list[str]]]:
+    out = []
+    for conv, items in fake.added:
+        assert all(json.loads(i["output"])["error"]["code"] == "aborted" for i in items)
+        out.append((conv, [i["call_id"] for i in items]))
+    return out
+
+
+async def test_loop_limit_closes_outstanding_calls(gateway) -> None:  # type: ignore[no-untyped-def]
+    looping = [NS(output=[_fc("get_usage", {}, f"c{i}")], output_text="") for i in range(3)]
+    fake = FakeOpenAI(looping)
+    with pytest.raises(AgentLoopLimit) as err:
+        await FoundryAgentRunner(fake, "a", 2).run_turn("q", "conv_9", gateway, _noop)
+    assert err.value.args == ("conv_9",)
+    assert len(fake.requests) == 3 and len(gateway.calls) == 2  # no extra model round to close
+    assert _aborted(fake) == [("conv_9", ["c2"])]
+
+
+async def test_final_answer_on_last_round_is_not_a_loop_limit(gateway) -> None:  # type: ignore[no-untyped-def]
+    fake = FakeOpenAI([NS(output=[_fc("get_usage", {})], output_text=""), _final("done")])
+    turn = await FoundryAgentRunner(fake, "a", 1).run_turn("q", "conv_9", gateway, _noop)
+    assert turn.output.answer == "done" and fake.added == []
+
+
+class _FailingGateway:
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+    async def call(self, name: str, arguments: dict[str, Any]) -> ToolCall:
+        raise self.exc
+
+
+async def test_gateway_failure_mid_loop_closes_calls_and_reraises() -> None:
+    fake = FakeOpenAI([NS(output=[_fc("get_usage", {}, "c1"), _fc("get_usage", {}, "c2")], output_text="")])
+    with pytest.raises(UpstreamUnavailable):
+        await FoundryAgentRunner(fake, "a", 5).run_turn(
+            "q", "conv_9", _FailingGateway(UpstreamUnavailable("down")), _noop
+        )
+    assert _aborted(fake) == [("conv_9", ["c1", "c2"])]
+
+
+async def test_failed_output_submission_closes_calls(gateway) -> None:  # type: ignore[no-untyped-def]
+    fake = FakeOpenAI([NS(output=[_fc("get_usage", {})], output_text=""), RuntimeError("boom")])
+    with pytest.raises(UpstreamUnavailable):
+        await FoundryAgentRunner(fake, "a", 5).run_turn("q", "conv_9", gateway, _noop)
+    assert _aborted(fake) == [("conv_9", ["c1"])]
+
+
+async def test_cancellation_closes_outstanding_calls() -> None:
+    started = asyncio.Event()
+
+    class _SlowGateway:
+        async def call(self, name: str, arguments: dict[str, Any]) -> ToolCall:
+            started.set()
+            await asyncio.sleep(60)
+            raise AssertionError("not reached")
+
+    fake = FakeOpenAI([NS(output=[_fc("get_usage", {})], output_text="")])
+    task = asyncio.create_task(
+        FoundryAgentRunner(fake, "a", 5).run_turn("q", "conv_9", _SlowGateway(), _noop)
+    )
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert _aborted(fake) == [("conv_9", ["c1"])]
+
+
+async def test_close_failure_never_masks_the_original_error() -> None:
+    fake = FakeOpenAI([NS(output=[_fc("get_usage", {})], output_text="")])
+
+    async def broken(conversation: str, *, items: list[dict[str, Any]]) -> NS:
+        raise RuntimeError("items down")
+
+    fake.conversations.items = NS(create=broken)
+    with pytest.raises(UpstreamUnavailable):
+        await FoundryAgentRunner(fake, "a", 5).run_turn(
+            "q", "conv_9", _FailingGateway(UpstreamUnavailable("down")), _noop
+        )
+
+
+def _pending_tool_output() -> openai.BadRequestError:
+    msg = "No tool output found for function call call_abc."
+    body = {"message": msg, "type": "invalid_request_error", "param": "input", "code": None}
+    response = httpx.Response(400, request=httpx.Request("POST", "https://foundry.invalid/responses"))
+    return openai.BadRequestError(f"Error code: 400 - {body}", response=response, body=body)
+
+
+async def test_pending_tool_output_starts_a_fresh_conversation(gateway) -> None:  # type: ignore[no-untyped-def]
+    fake = FakeOpenAI([_pending_tool_output(), _final("fresh")])
+    turn = await FoundryAgentRunner(fake, "a", 5).run_turn("q", "conv_old", gateway, _noop)
+    assert turn.output.answer == "fresh" and turn.agent_conversation_id == "conv_1"
+    assert [r["conversation"] for r in fake.requests] == ["conv_old", "conv_1"]
+
+
+async def test_pending_tool_output_retries_only_once(gateway) -> None:  # type: ignore[no-untyped-def]
+    fake = FakeOpenAI([_pending_tool_output(), _pending_tool_output()])
+    with pytest.raises(UpstreamUnavailable):
+        await FoundryAgentRunner(fake, "a", 5).run_turn("q", "conv_old", gateway, _noop)
+    assert len(fake.requests) == 2
+
+
+async def test_throttled_model_call_is_retried(gateway, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(foundry, "RETRY_BACKOFF_SECONDS", 0)
+    response = httpx.Response(429, request=httpx.Request("POST", "https://foundry.invalid/responses"))
+    throttled = openai.RateLimitError("throttled", response=response, body=None)
+    fake = FakeOpenAI([throttled, _final("ok")])
+    turn = await FoundryAgentRunner(fake, "a", 5).run_turn("q", "conv_9", gateway, _noop)
+    assert turn.output.answer == "ok" and len(fake.requests) == 2
+
+
+async def test_other_bad_requests_are_not_retried(gateway) -> None:  # type: ignore[no-untyped-def]
+    response = httpx.Response(400, request=httpx.Request("POST", "https://foundry.invalid/responses"))
+    bad = openai.BadRequestError("bad", response=response, body={"message": "Invalid schema"})
+    fake = FakeOpenAI([bad])
+    with pytest.raises(UpstreamUnavailable):
+        await FoundryAgentRunner(fake, "a", 5).run_turn("q", "conv_9", gateway, _noop)
+    assert fake.created == 0 and len(fake.requests) == 1
 
 
 async def test_upstream_failure_is_503(gateway) -> None:  # type: ignore[no-untyped-def]
@@ -119,6 +248,7 @@ async def test_content_filter_after_tool_call_is_a_refusal(gateway) -> None:  # 
     fake = FakeOpenAI([NS(output=[_fc("get_usage", {})], output_text=""), _ContentFilter()])
     turn = await FoundryAgentRunner(fake, "a", 5).run_turn("q", "conv_9", gateway, _noop)
     assert turn.output.status == "refused" and len(turn.calls) == 1
+    assert _aborted(fake) == [("conv_9", ["c1"])]
 
 
 def test_tracing_guard_skips_non_recording_spans() -> None:

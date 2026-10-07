@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, NetworkError, errorMessage, problemMessage, toApiError } from "../../src/api/problems";
+import {
+  ApiError,
+  NetworkError,
+  StreamInterruptedError,
+  describeError,
+  errorMessage,
+  problemMessage,
+  toApiError,
+} from "../../src/api/problems";
 import { problemResponse } from "./helpers";
 
 describe("problem code → message", () => {
@@ -35,6 +43,33 @@ describe("problem code → message", () => {
   });
 
   it("handles network errors", () => {
-    expect(errorMessage(new NetworkError())).toMatch(/couldn't reach the server/);
+    expect(errorMessage(new NetworkError())).toMatch(/You appear to be offline/);
+  });
+
+  it("describes errors with code, correlation id and whether a retry can help", async () => {
+    expect(describeError(await toApiError(problemResponse(503, "upstream_unavailable")))).toMatchObject({
+      code: "upstream_unavailable",
+      correlationId: "corr-err",
+      retryable: true,
+    });
+    expect(describeError(await toApiError(problemResponse(500, "internal_error")))).toMatchObject({
+      message: "Something went wrong. Please try again.",
+      retryable: true,
+    });
+    for (const [status, code] of [
+      [422, "invalid_request"],
+      [404, "conversation_not_found"],
+      [403, "not_onboarded"],
+    ] as const) {
+      expect(describeError(await toApiError(problemResponse(status, code))).retryable).toBe(false);
+    }
+    expect(describeError(new StreamInterruptedError("x", "corr-s"))).toEqual({
+      message:
+        "The connection dropped before the answer arrived. Your question may still have been answered — check History or try again.",
+      code: "stream_interrupted",
+      correlationId: "corr-s",
+      retryable: true,
+    });
+    expect(describeError(new NetworkError())).toMatchObject({ code: "network_error", retryable: true });
   });
 });

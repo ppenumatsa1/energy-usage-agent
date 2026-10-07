@@ -1,11 +1,12 @@
 """The chat use case (BR-1, BR-2, BR-6, BR-11, BR-12). Numbers in the table/chart come from projections."""
 
+import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from energy_usage_shared.auth import Principal
 
@@ -61,6 +62,9 @@ class ChatService:
         agent_name: str = "energy-usage-agent",
         retention_days: int = 30,
         store_kind: str = "postgres",
+        purge_batch_size: int = 200,
+        forget_concurrency: int = 5,
+        forget_timeout_s: float = 10.0,
     ) -> None:
         self._agent = agent
         self._tools = tools
@@ -72,6 +76,9 @@ class ChatService:
         self._agent_name = agent_name
         self._retention_days = retention_days
         self._store_kind = store_kind
+        self._purge_batch_size = purge_batch_size
+        self._forget_concurrency = forget_concurrency
+        self._forget_timeout_s = forget_timeout_s
 
     async def me(self, principal: Principal) -> MeResponse:
         token = await self._obo.token_for(principal)
@@ -97,7 +104,8 @@ class ChatService:
             conversation = await self._conversations.get(
                 request.conversation_id, principal.tid, principal.oid
             )
-            if conversation is None:  # someone else's conversation looks exactly like a missing one
+            # someone else's (or an expired) conversation looks exactly like a missing one
+            if conversation is None or conversation.updated_at < self._cutoff():
                 raise ConversationNotFound()
         return PreparedChat(principal, message, token, conversation, correlation_id)
 
@@ -184,24 +192,43 @@ class ChatService:
                 StoredTurn(chat.message, response.model_dump(mode="json", by_alias=True)),
             )
         except Exception:  # the user still gets the answer; only history misses this turn
-            _log.warning("turn_save_failed", exc_info=True)
+            _log.warning("turn_save_failed", exc_info=True, extra={"event": "turn_save_failed"})
         return response
 
     async def ask(self, principal: Principal, request: ChatRequest, correlation_id: str) -> ChatResponse:
         return await self.answer(await self.prepare(principal, request, correlation_id))
 
     async def _save(self, chat: PreparedChat, agent_conversation_id: str | None) -> ConversationRecord:
-        if chat.conversation:
-            await self._conversations.touch(chat.conversation.conversation_id)
-            return chat.conversation
-        p = chat.principal
-        return await self._conversations.create(
-            p.tid, p.oid, agent_conversation_id or "", _title(chat.message)
-        )
+        """Never raises: the agent already answered, so the user gets the answer even if history fails."""
+        existing = chat.conversation
+        try:
+            if existing is None:
+                p = chat.principal
+                return await self._conversations.create(
+                    p.tid, p.oid, agent_conversation_id or "", _title(chat.message)
+                )
+            if agent_conversation_id and agent_conversation_id != existing.agent_conversation_id:
+                # the agent started a fresh thread (e.g. the old one broke); follow-ups must use it
+                await self._conversations.set_agent_conversation(
+                    existing.conversation_id, agent_conversation_id
+                )
+                return replace(existing, agent_conversation_id=agent_conversation_id)
+            await self._conversations.touch(existing.conversation_id)
+            return existing
+        except Exception:
+            _log.warning("history_save_failed", exc_info=True, extra={"event": "history_save_failed"})
+            if existing is not None:
+                return existing
+            # Not stored: a follow-up on this id gets conversation_not_found and starts a new conversation.
+            now = datetime.now(UTC)
+            p = chat.principal
+            return ConversationRecord(
+                uuid4(), p.tid, p.oid, agent_conversation_id or "", _title(chat.message), now, now
+            )
 
     async def list_conversations(self, principal: Principal) -> list[ConversationSummary]:
-        await self.purge_expired()
         rows = await self._conversations.list(principal.tid, principal.oid)
+        cutoff = self._cutoff()  # expired but not purged yet: already gone for the user
         return [
             ConversationSummary(
                 conversation_id=r.conversation_id,
@@ -211,6 +238,7 @@ class ChatService:
                 turn_count=r.turn_count,
             )
             for r in rows
+            if r.updated_at >= cutoff
         ]
 
     async def get_conversation(self, principal: Principal, conversation_id: UUID) -> ConversationDetail:
@@ -230,14 +258,29 @@ class ChatService:
         )
 
     async def purge_expired(self) -> int:
-        """Retention: drop conversations idle longer than the retention period (and their agent threads)."""
+        """Retention: drop up to one batch of conversations idle past the retention period, then their
+        agent threads (bounded concurrency, per-call timeout). Runs in the background, never per request.
+        Safe on several replicas at once: each expired row is deleted (and returned) only once."""
         try:
-            expired = await self._conversations.purge(self._cutoff())
+            expired = await self._conversations.purge(self._cutoff(), self._purge_batch_size)
         except Exception:
-            _log.warning("history_purge_failed", exc_info=True)
+            _log.warning("history_purge_failed", exc_info=True, extra={"event": "history_purge_failed"})
             return 0
-        for record in expired:
-            await self._forget(record)
+        gate = asyncio.Semaphore(self._forget_concurrency)
+
+        async def forget(record: ConversationRecord) -> None:
+            async with gate:
+                try:
+                    await asyncio.wait_for(self._forget(record), self._forget_timeout_s)
+                except TimeoutError:
+                    _log.warning(
+                        "agent_conversation_delete_failed",
+                        extra={"event": "agent_conversation_delete_failed", "reason": "timeout"},
+                    )
+
+        await asyncio.gather(*(forget(r) for r in expired))
+        if expired:
+            _log.info("history_purged", extra={"event": "history_purged", "count": len(expired)})
         return len(expired)
 
     async def status(self) -> StatusResponse:
@@ -284,7 +327,11 @@ class ChatService:
             try:
                 await self._agent.forget(record.agent_conversation_id)
             except Exception:  # best effort; our record is already gone
-                _log.warning("agent_conversation_delete_failed", exc_info=True)
+                _log.warning(
+                    "agent_conversation_delete_failed",
+                    exc_info=True,
+                    extra={"event": "agent_conversation_delete_failed"},
+                )
 
 
 def _title(message: str) -> str:

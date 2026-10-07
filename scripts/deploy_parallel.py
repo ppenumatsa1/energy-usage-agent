@@ -4,7 +4,8 @@ azd deploys services one by one; ACR builds and revision rollouts are independen
 side saves ~1–1.5 min per extra service. Concurrent azd processes can overwrite each other's
 SERVICE_<NAME>_IMAGE_NAME in the azd env, so afterwards those values are reset from the running apps.
 Like a full `azd deploy`, it then runs deploy_agent.py (skipped when the agent definition is unchanged)
-and verify_deployment.py.
+and verify_deployment.py once. DEPLOY_PARALLEL makes the per-service postdeploy hooks skip, so they don't
+run once per service at the same time.
 
 Usage: uv run python scripts/deploy_parallel.py [web app-api energy-service]
 """
@@ -19,7 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = ["web", "app-api", "energy-service"]
-ENV = {**os.environ, "AZD_SKIP_UPDATE_CHECK": "true"}
+ENV = {**os.environ, "AZD_SKIP_UPDATE_CHECK": "true", "DEPLOY_PARALLEL": "1"}
 
 
 def deploy(service: str) -> tuple[str, int, float, str]:

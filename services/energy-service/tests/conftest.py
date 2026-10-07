@@ -1,6 +1,9 @@
+from contextlib import ExitStack
 from datetime import UTC, date, datetime
+from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from energy_usage_energy.api.app import create_app
@@ -44,8 +47,7 @@ def service() -> UsageService:
     return UsageService(MemoryDirectory(), MemoryRepository(end_day=DATA_END), clock=lambda: NOW)
 
 
-@pytest.fixture(scope="session")
-def client(service: UsageService):  # type: ignore[no-untyped-def]
+def build_test_app(service: UsageService, repository: Any) -> FastAPI:
     settings = EnergySettings(
         environment="test",
         auth_mode="dev",
@@ -56,8 +58,26 @@ def client(service: UsageService):  # type: ignore[no-untyped-def]
     container = Container(
         settings=settings,
         service=service,
-        repository=service._repo,  # noqa: SLF001
+        repository=repository,
         validator=DevTokenValidator(SECRET, AUDIENCE, SCOPE),
     )
-    with TestClient(create_app(container)) as c:
+    return create_app(container)
+
+
+@pytest.fixture(scope="session")
+def client(service: UsageService):  # type: ignore[no-untyped-def]
+    with TestClient(build_test_app(service, service._repo)) as c:  # noqa: SLF001
         yield c
+
+
+@pytest.fixture
+def client_for():  # type: ignore[no-untyped-def]
+    """A client whose service uses the given repository (e.g. one that fails). Server errors become
+    500 responses instead of being re-raised, like in production."""
+    with ExitStack() as stack:
+
+        def make(repository: Any) -> TestClient:
+            app = build_test_app(UsageService(MemoryDirectory(), repository, clock=lambda: NOW), repository)
+            return stack.enter_context(TestClient(app, raise_server_exceptions=False))
+
+        yield make

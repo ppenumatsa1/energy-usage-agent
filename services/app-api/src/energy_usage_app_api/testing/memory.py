@@ -28,6 +28,12 @@ class MemoryConversationStore:
         if rec := self._items.get(conversation_id):
             self._items[conversation_id] = replace(rec, updated_at=datetime.now(UTC))
 
+    async def set_agent_conversation(self, conversation_id: UUID, agent_conversation_id: str) -> None:
+        if rec := self._items.get(conversation_id):
+            self._items[conversation_id] = replace(
+                rec, agent_conversation_id=agent_conversation_id, updated_at=datetime.now(UTC)
+            )
+
     async def list(self, tid: str, oid: str, limit: int = 50) -> list[ConversationRecord]:
         mine = [
             replace(r, turn_count=len(self._turns.get(r.conversation_id, [])))
@@ -50,8 +56,11 @@ class MemoryConversationStore:
     async def turns(self, conversation_id: UUID) -> list[StoredTurn]:
         return list(self._turns.get(conversation_id, []))
 
-    async def purge(self, before: datetime) -> list[ConversationRecord]:
-        expired = [r for r in self._items.values() if r.updated_at < before]
+    async def purge(self, before: datetime, limit: int) -> list[ConversationRecord]:
+        expired = sorted(
+            (r for r in self._items.values() if r.updated_at < before), key=lambda r: r.updated_at
+        )
+        expired = expired[:limit]
         for r in expired:
             del self._items[r.conversation_id]
             self._turns.pop(r.conversation_id, None)

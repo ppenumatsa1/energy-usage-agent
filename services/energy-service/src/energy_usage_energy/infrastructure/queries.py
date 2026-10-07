@@ -4,6 +4,8 @@ RESOLVE_CUSTOMER = (
     "SELECT customer_id, name, timezone FROM energy.resolve_customer(%(tid)s::uuid, %(oid)s::uuid)"
 )
 
+SET_STATEMENT_TIMEOUT = "SELECT set_config('statement_timeout', %(ms)s, true)"
+
 SET_CUSTOMER_SCOPE = "SELECT set_config('app.customer_id', %(customer_id)s, true)"
 
 _FILTERS = """

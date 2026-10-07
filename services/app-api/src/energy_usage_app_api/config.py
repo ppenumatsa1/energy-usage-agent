@@ -32,6 +32,9 @@ class AppApiSettings(ServiceSettings):
     app_db_user: str | None = None
     app_db_entra_auth: bool = False
     history_retention_days: int = 30
+    # Background retention purge (0 disables it), and how many conversations one run deletes at most
+    history_purge_interval_minutes: float = 60
+    history_purge_batch_size: int = 200
 
     rate_limit_per_minute: int = 20
 

@@ -79,6 +79,7 @@ def settings(**overrides: Any) -> AppApiSettings:
         "auth_audience": "app-api",
         "agent_mode": "fake",
         "obo_credential": "dev",
+        "history_purge_interval_minutes": 0,  # tests run the purge explicitly
     }
     return AppApiSettings(**{**base, **overrides})
 
@@ -88,18 +89,31 @@ def gateway() -> StubGateway:
     return StubGateway({})
 
 
-@pytest.fixture
-def client(gateway: StubGateway):  # type: ignore[no-untyped-def]
+def make_client(gateway: StubGateway, **overrides: Any) -> TestClient:
+    """A test client with stubs; pass agent=..., conversations=... or settings fields to override."""
+    parts: dict[str, Any] = {
+        "agent": overrides.pop("agent", None) or FakeAgentRunner(),
+        "conversations": overrides.pop("conversations", None) or MemoryConversationStore(),
+    }
     container = build_container(
-        settings(rate_limit_per_minute=5),
+        settings(**{"rate_limit_per_minute": 5, **overrides}),
         validator=DevTokenValidator(SECRET, "app-api", "Chat.Ask"),
-        agent=FakeAgentRunner(),
         tools=StubGatewayFactory(gateway),
         obo=StubObo(),
         profile=StubProfile(),
-        conversations=MemoryConversationStore(),
+        **parts,
     )
-    with TestClient(create_app(container)) as c:
+    return TestClient(create_app(container))
+
+
+@pytest.fixture
+def client_factory(gateway: StubGateway):  # type: ignore[no-untyped-def]
+    return lambda **overrides: make_client(gateway, **overrides)
+
+
+@pytest.fixture
+def client(gateway: StubGateway):  # type: ignore[no-untyped-def]
+    with make_client(gateway) as c:
         yield c
 
 

@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,8 @@ from ..application.errors import ChatError
 from ..bootstrap import Container
 from .routers import chat, conversations, dev, health, me
 
+_log = logging.getLogger("energy_usage.app")
+
 
 def create_app(container: Container) -> FastAPI:
     @asynccontextmanager
@@ -21,7 +24,10 @@ def create_app(container: Container) -> FastAPI:
             yield
         finally:
             for stop in reversed(container.shutdown):
-                await stop()
+                try:  # one failing hook must not keep the others (e.g. closing the DB pool) from running
+                    await stop()
+                except Exception:
+                    _log.exception("shutdown_hook_failed", extra={"event": "shutdown_hook_failed"})
 
     app = FastAPI(title="app-api", version="0.1.0", lifespan=lifespan, telemetry=FASTAPI_TELEMETRY)
     app.state.container = container

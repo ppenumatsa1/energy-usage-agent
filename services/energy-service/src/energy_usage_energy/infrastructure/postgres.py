@@ -1,16 +1,22 @@
 """Postgres adapters. Every customer query runs inside RlsSession (BR-3): a transaction with
-`set_config('app.customer_id', ..., true)` (= SET LOCAL). RLS policies then filter every table."""
+`set_config('app.customer_id', ..., true)` (= SET LOCAL). RLS policies then filter every table.
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+Database failures are translated here into domain errors (DataUnavailable / QueryTimeout) so the
+application layer and adapters never see psycopg exceptions."""
+
+import logging
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import date
 from typing import Any
 from uuid import UUID
 
+import psycopg
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+from ..application.errors import DataUnavailable, QueryTimeout
 from ..application.models import (
     BreakdownGranularity,
     CustomerContext,
@@ -24,6 +30,29 @@ from ..application.models import (
 )
 from . import queries
 
+_log = logging.getLogger("energy_usage.db")
+DEFAULT_STATEMENT_TIMEOUT_MS = 10_000
+PING_TIMEOUT_SECONDS = 3.0
+
+
+@contextmanager
+def translate_db_errors(operation: str) -> Iterator[None]:
+    """Map transient database failures to retryable domain errors. Other psycopg errors (SQL bugs,
+    privilege errors) are real defects and propagate as-is (-> 500 with a generic body)."""
+    try:
+        yield
+    except psycopg.errors.QueryCanceled as exc:
+        _log.warning("db_query_timeout", extra={"event": "db_query_timeout", "operation": operation})
+        raise QueryTimeout() from exc
+    except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
+        # Includes PoolTimeout, refused connections, dropped connections and credential failures.
+        _log.warning(
+            "db_unavailable",
+            exc_info=True,
+            extra={"event": "db_unavailable", "operation": operation, "error_type": type(exc).__name__},
+        )
+        raise DataUnavailable() from exc
+
 
 class PgCustomerDirectory:
     """Reads the mapping only through the SECURITY DEFINER function energy.resolve_customer."""
@@ -36,9 +65,10 @@ class PgCustomerDirectory:
             UUID(tid), UUID(oid)
         except ValueError:
             return None
-        async with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(queries.RESOLVE_CUSTOMER, {"tid": tid, "oid": oid})
-            row = await cur.fetchone()
+        with translate_db_errors("resolve_customer"):
+            async with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(queries.RESOLVE_CUSTOMER, {"tid": tid, "oid": oid})
+                row = await cur.fetchone()
         if not row:
             return None
         return CustomerContext(customer_id=row["customer_id"], name=row["name"], timezone=row["timezone"])
@@ -88,27 +118,43 @@ class PgUsageReader:
 
 
 class PgUsageRepository:
-    def __init__(self, pool: AsyncConnectionPool) -> None:
+    def __init__(
+        self, pool: AsyncConnectionPool, statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS
+    ) -> None:
         self._pool = pool
+        self._statement_timeout_ms = statement_timeout_ms
 
     @asynccontextmanager
     async def scoped(self, customer_id: UUID) -> AsyncIterator[PgUsageReader]:
-        async with rls_session(self._pool, customer_id) as conn:
+        async with rls_session(self._pool, customer_id, self._statement_timeout_ms) as conn:
             yield PgUsageReader(conn)
 
     async def ping(self) -> bool:
-        async with self._pool.connection() as conn:
-            await conn.execute("SELECT 1")
+        """Readiness: False when the database can't be reached quickly. Never raises for DB failures."""
+        try:
+            async with self._pool.connection(timeout=PING_TIMEOUT_SECONDS) as conn:
+                await conn.execute("SELECT 1")
+        except psycopg.Error as exc:
+            _log.warning(
+                "db_ping_failed", extra={"event": "db_ping_failed", "error_type": type(exc).__name__}
+            )
+            return False
         return True
 
 
 @asynccontextmanager
-async def rls_session(pool: AsyncConnectionPool, customer_id: UUID) -> AsyncIterator[AsyncConnection[Any]]:
-    """The ONLY way to get a connection for customer data. Scope is transaction-local, so it cannot
-    leak to the next borrower of the pooled connection."""
+async def rls_session(
+    pool: AsyncConnectionPool,
+    customer_id: UUID,
+    statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
+) -> AsyncIterator[AsyncConnection[Any]]:
+    """The ONLY way to get a connection for customer data. Scope and statement timeout are
+    transaction-local, so they cannot leak to the next borrower of the pooled connection."""
     if not isinstance(customer_id, UUID):
         raise TypeError("customer_id must be a UUID")
-    async with pool.connection() as conn, conn.transaction():
-        await conn.execute("SET TRANSACTION READ ONLY")
-        await conn.execute(queries.SET_CUSTOMER_SCOPE, {"customer_id": str(customer_id)})
-        yield conn
+    with translate_db_errors("rls_session"):
+        async with pool.connection() as conn, conn.transaction():
+            await conn.execute("SET TRANSACTION READ ONLY")
+            await conn.execute(queries.SET_STATEMENT_TIMEOUT, {"ms": str(int(statement_timeout_ms))})
+            await conn.execute(queries.SET_CUSTOMER_SCOPE, {"customer_id": str(customer_id)})
+            yield conn

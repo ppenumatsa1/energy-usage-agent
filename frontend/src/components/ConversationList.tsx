@@ -1,5 +1,7 @@
 import { useState } from "react";
+import type { ErrorInfo } from "../api/problems";
 import type { ConversationSummary } from "../types/api";
+import { ErrorRef } from "./ErrorRef";
 import { plural, relativeTime } from "./format";
 import { ChatIcon, PlusIcon, TrashIcon } from "./Icons";
 
@@ -7,7 +9,7 @@ interface Props {
   items: ConversationSummary[];
   loaded: boolean;
   activeId?: string;
-  error: string | null;
+  error: ErrorInfo | null;
   retentionDays: number;
   onNew: () => void;
   onOpen: (conversationId: string) => void;
@@ -25,7 +27,7 @@ export function ConversationList({ items, loaded, activeId, error, retentionDays
       <h2 className="sidebar__heading">History</h2>
       {error ? (
         <p className="small error-text" role="alert">
-          {error}
+          {error.message} <ErrorRef correlationId={error.correlationId} />
         </p>
       ) : null}
       {loaded && items.length === 0 && !error ? (

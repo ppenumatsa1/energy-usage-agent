@@ -5,6 +5,7 @@ import { useConversations } from "../hooks/useConversations";
 import { AnswerCard } from "./AnswerCard";
 import { Composer } from "./Composer";
 import { ConversationList } from "./ConversationList";
+import { ErrorRef } from "./ErrorRef";
 import { plural } from "./format";
 import { AlertIcon, BoltIcon, CloseIcon, InfoIcon, MenuIcon } from "./Icons";
 import { QuestionChips } from "./QuestionChips";
@@ -65,6 +66,7 @@ function HistoryNotice({ history, onRetry, onNew }: { history: HistoryState; onR
           <button type="button" className="btn btn--primary btn--small" onClick={onNew}>
             Start a new conversation
           </button>
+          <ErrorRef correlationId={history.correlationId} />
         </div>
       </div>
     </div>
@@ -73,7 +75,11 @@ function HistoryNotice({ history, onRetry, onNew }: { history: HistoryState; onR
 
 export function ChatWorkspace({ api, retentionDays }: Props) {
   const conversations = useConversations(api);
-  const chat = useChat(api, { onAnswered: conversations.refresh, onMissing: conversations.drop });
+  const chat = useChat(api, {
+    onAnswered: conversations.refresh,
+    onMissing: conversations.drop,
+    onInterrupted: conversations.refresh,
+  });
   const [expandAll, setExpandAll] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [lastOpened, setLastOpened] = useState<string | undefined>();

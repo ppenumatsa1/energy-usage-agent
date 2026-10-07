@@ -1,5 +1,6 @@
 """PgConversationStore on real Postgres, connected as a login that only has app_api_rw (checks grants)."""
 
+import asyncio
 import os
 import uuid
 from collections.abc import AsyncIterator, Iterator
@@ -76,9 +77,22 @@ async def test_purge_removes_idle_conversations_and_turns(store: PgConversationS
     old = await store.create(TID, OID, "agent-old", "old")
     await store.add_turn(old.conversation_id, StoredTurn("q", {"answer": "a"}))
     fresh = await store.create(TID, OID, "agent-new", "new")
-    purged = await store.purge(datetime.now(UTC) + timedelta(seconds=1))
-    assert {r.conversation_id for r in purged} >= {old.conversation_id, fresh.conversation_id}
+    extra = await store.create(TID, OID, "agent-extra", "extra")
+    cutoff = datetime.now(UTC) + timedelta(seconds=1)
+    # two replicas purging at once: batches are disjoint and together cover everything expired
+    a, b = await asyncio.gather(store.purge(cutoff, 2), store.purge(cutoff, 2))
+    rest = await store.purge(cutoff, 100)
+    ids = [r.conversation_id for r in a + b + rest]
+    assert len(a) <= 2 and len(b) <= 2 and len(ids) == len(set(ids))
+    assert set(ids) >= {old.conversation_id, fresh.conversation_id, extra.conversation_id}
     assert await store.turns(old.conversation_id) == []
     keep = await store.create(TID, OID, "agent-keep", "keep")
-    assert await store.purge(datetime.now(UTC) - timedelta(days=30)) == []
+    assert await store.purge(datetime.now(UTC) - timedelta(days=30), 100) == []
     assert await store.get(keep.conversation_id, TID, OID) is not None
+
+
+async def test_set_agent_conversation(store: PgConversationStore) -> None:
+    rec = await store.create(TID, OID, "agent-broken", "t")
+    await store.set_agent_conversation(rec.conversation_id, "agent-fresh")
+    got = await store.get(rec.conversation_id, TID, OID)
+    assert got is not None and got.agent_conversation_id == "agent-fresh" and got.updated_at > rec.updated_at

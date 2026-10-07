@@ -3,7 +3,7 @@
 import psycopg
 import pytest
 
-from energy_usage_energy.application.errors import InvalidArgument
+from energy_usage_energy.application.errors import DataUnavailable, InvalidArgument, QueryTimeout
 from energy_usage_energy.application.models import Caller, Granularity
 from energy_usage_energy.application.service import UsageService
 from energy_usage_energy.infrastructure.postgres import PgCustomerDirectory, PgUsageRepository, rls_session
@@ -98,3 +98,35 @@ async def test_service_end_to_end_on_postgres(database: dict[str, str]) -> None:
         with pytest.raises(InvalidArgument):
             await svc.get_usage(b1, "last_7_days", "last_7_days", Granularity.DAY, site_id="S-101")
         assert (await svc.me(b1)).customer_name == "Demo Customer 3"
+
+
+async def test_statement_timeout_is_transaction_local_and_mapped(database: dict[str, str]) -> None:
+    pool = build_pool(database_url=database["app"], host=None, dbname=None, user=None, entra_auth=False,
+                      client_id=None, min_size=1, max_size=1)  # fmt: skip
+    async with pool:
+        async with pool.connection() as conn:
+            default = (await (await conn.execute("SHOW statement_timeout")).fetchone())[0]  # type: ignore[index]
+        with pytest.raises(QueryTimeout):
+            async with rls_session(pool, C1, statement_timeout_ms=100) as conn:
+                await conn.execute("SELECT pg_sleep(2)")
+        async with rls_session(pool, C1) as conn:
+            cur = await conn.execute("SHOW statement_timeout")
+            assert (await cur.fetchone())[0] == "10s"  # type: ignore[index]
+        async with pool.connection() as conn:  # same physical connection, back to the server default
+            cur = await conn.execute("SHOW statement_timeout")
+            assert (await cur.fetchone())[0] == default  # type: ignore[index]
+
+
+async def test_unreachable_database_is_unavailable_not_500(database: dict[str, str]) -> None:
+    params = psycopg.conninfo.conninfo_to_dict(database["app"])
+    bad = psycopg.conninfo.make_conninfo(**{**params, "host": "127.0.0.1", "port": "1"})
+    pool = build_pool(database_url=bad, host=None, dbname=None, user=None, entra_auth=False, client_id=None,
+                      connect_timeout=1, timeout=0.5)  # fmt: skip
+    await pool.open(wait=False)
+    try:
+        svc = UsageService(PgCustomerDirectory(pool), PgUsageRepository(pool))
+        with pytest.raises(DataUnavailable):
+            await svc.me(Caller(DEV_USERS["a1"].tid, DEV_USERS["a1"].oid))
+        assert await PgUsageRepository(pool).ping() is False
+    finally:
+        await pool.close()

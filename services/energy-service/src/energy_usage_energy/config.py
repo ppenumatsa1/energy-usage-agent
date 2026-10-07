@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from energy_usage_shared.settings import ServiceSettings
 
@@ -15,6 +15,9 @@ class EnergySettings(ServiceSettings):
     db_user: str | None = None
     db_entra_auth: bool = False
     azure_client_id: str | None = None
+    db_connect_timeout_seconds: int = Field(default=10, ge=1)
+    db_pool_timeout_seconds: float = Field(default=10.0, gt=0)
+    db_statement_timeout_ms: int = Field(default=10_000, ge=100)
 
     @model_validator(mode="after")
     def _guard_memory(self) -> "EnergySettings":

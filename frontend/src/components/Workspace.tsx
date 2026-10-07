@@ -1,10 +1,11 @@
-import { errorMessage } from "../api/problems";
+import { describeError } from "../api/problems";
 import { useAuth } from "../auth/context";
 import { useApi } from "../hooks/useApi";
 import { useMe } from "../hooks/useMe";
 import { useStatus } from "../hooks/useStatus";
 import { AppHeader } from "./AppHeader";
 import { ChatWorkspace } from "./ChatWorkspace";
+import { ErrorRef } from "./ErrorRef";
 import { AlertIcon } from "./Icons";
 import { NotOnboarded } from "./NotOnboarded";
 import { Spinner } from "./Spinner";
@@ -51,10 +52,11 @@ export function Workspace() {
               <AlertIcon size={20} />
             </span>
             <h1>We couldn't load your account</h1>
-            <p>{errorMessage(state.error)}</p>
+            <p>{describeError(state.error).message}</p>
             <button type="button" className="btn btn--primary" onClick={reload}>
               Try again
             </button>
+            <ErrorRef correlationId={describeError(state.error).correlationId} />
           </section>
         </main>
       ) : null}

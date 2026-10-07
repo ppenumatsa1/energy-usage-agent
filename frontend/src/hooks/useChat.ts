@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../api/client";
-import { ApiError, errorMessage } from "../api/problems";
+import { ApiError, StreamInterruptedError, describeError, isAbortError, type ErrorInfo } from "../api/problems";
 import type { ChatResponse, ConversationDetail, StatusEvent } from "../types/api";
 
-export interface TurnError {
-  message: string;
-  code?: string;
-  correlationId?: string;
-}
+export type TurnError = ErrorInfo;
 
 export interface ChatTurn {
   id: string;
@@ -23,13 +19,15 @@ export interface ChatTurn {
 export type HistoryState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "error"; message: string; notFound: boolean };
+  | { status: "error"; message: string; notFound: boolean; correlationId?: string };
 
 export interface ChatCallbacks {
   /** Called after every answer that was saved to a conversation. */
   onAnswered?: (conversationId: string) => void;
   /** Called when a conversation turns out to be gone (404 conversation_not_found). */
   onMissing?: (conversationId: string) => void;
+  /** Called when a stream broke after the server accepted the question; the answer may still have been saved. */
+  onInterrupted?: () => void;
 }
 
 const NOT_FOUND_MESSAGE =
@@ -51,7 +49,7 @@ function historyTurns(detail: ConversationDetail): ChatTurn[] {
   }));
 }
 
-export function useChat(api: ApiClient, { onAnswered, onMissing }: ChatCallbacks = {}) {
+export function useChat(api: ApiClient, { onAnswered, onMissing, onInterrupted }: ChatCallbacks = {}) {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [title, setTitle] = useState<string | undefined>();
@@ -62,7 +60,14 @@ export function useChat(api: ApiClient, { onAnswered, onMissing }: ChatCallbacks
   const conversationRef = useRef<string | undefined>(undefined);
   const loadRef = useRef(0);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(
+    () => () => {
+      // Cancel in-flight work so nothing sets state after unmount.
+      abortRef.current?.abort();
+      loadRef.current += 1;
+    },
+    [],
+  );
 
   const updateTurn = (id: string, patch: Partial<ChatTurn>) =>
     setTurns((list) => list.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -104,25 +109,19 @@ export function useChat(api: ApiClient, { onAnswered, onMissing }: ChatCallbacks
           onAnswered?.(response.conversationId);
         }
       } catch (error) {
-        if (controller.signal.aborted) return;
+        if (isAbortError(error, controller.signal)) return;
         const apiError = error instanceof ApiError ? error : undefined;
         if (apiError?.code === "conversation_not_found") {
           if (previousConversation) onMissing?.(previousConversation);
           setConversation(undefined);
         }
-        updateTurn(turnId, {
-          state: "error",
-          error: {
-            message: errorMessage(error),
-            code: apiError?.code,
-            correlationId: apiError?.correlationId,
-          },
-        });
+        if (error instanceof StreamInterruptedError) onInterrupted?.();
+        updateTurn(turnId, { state: "error", error: describeError(error) });
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [api, onAnswered, onMissing],
+    [api, onAnswered, onMissing, onInterrupted],
   );
 
   const send = useCallback(
@@ -180,7 +179,13 @@ export function useChat(api: ApiClient, { onAnswered, onMissing }: ChatCallbacks
             setConversation(undefined);
             onMissing?.(id);
           }
-          setHistory({ status: "error", notFound, message: notFound ? NOT_FOUND_MESSAGE : errorMessage(error) });
+          const info = describeError(error);
+          setHistory({
+            status: "error",
+            notFound,
+            message: notFound ? NOT_FOUND_MESSAGE : info.message,
+            correlationId: info.correlationId,
+          });
         });
     },
     [api, onMissing, reset],

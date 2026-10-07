@@ -1,5 +1,8 @@
 """Builds the runtime object graph from settings. Tests pass overrides instead of patching."""
 
+import asyncio
+import contextlib
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -9,6 +12,39 @@ from energy_usage_shared.auth import TokenValidator, build_validator
 from .application.chat_service import ChatService
 from .application.ports import AgentRunner, ConversationStore, OboProvider, ProfileClient, ToolGatewayFactory
 from .config import AppApiSettings
+
+_log = logging.getLogger("energy_usage.history")
+
+
+class RetentionPurger:
+    """Runs ChatService.purge_expired in the background: shortly after startup, then every interval.
+    Never raises into the app; stop() cancels it cleanly."""
+
+    def __init__(self, chat: ChatService, interval_s: float, first_delay_s: float = 60.0) -> None:
+        self._chat = chat
+        self._interval_s = interval_s
+        self._first_delay_s = min(first_delay_s, interval_s)
+        self._task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        self._task = asyncio.create_task(self._run(), name="history-retention-purge")
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def _run(self) -> None:
+        delay = self._first_delay_s
+        while True:
+            await asyncio.sleep(delay)
+            delay = self._interval_s
+            try:
+                await self._chat.purge_expired()
+            except Exception:
+                _log.exception("history_purge_failed", extra={"event": "history_purge_failed"})
 
 
 @dataclass
@@ -118,5 +154,10 @@ def build_container(
         agent_name=settings.foundry_agent_name,
         retention_days=settings.history_retention_days,
         store_kind=store_kind,
+        purge_batch_size=settings.history_purge_batch_size,
     )
+    if settings.history_purge_interval_minutes > 0:
+        purger = RetentionPurger(chat, settings.history_purge_interval_minutes * 60)
+        startup.append(purger.start)
+        shutdown.append(purger.stop)  # shutdown runs in reverse: stops before the pool closes
     return Container(settings, chat, validator or build_validator(settings), startup, shutdown)

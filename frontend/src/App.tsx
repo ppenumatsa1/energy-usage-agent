@@ -5,6 +5,7 @@ import { EntraAuthProvider } from "./auth/EntraAuthProvider";
 import { SignInScreen } from "./auth/SignInScreen";
 import { useAuth } from "./auth/context";
 import { AppHeader } from "./components/AppHeader";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Workspace } from "./components/Workspace";
 import type { RuntimeConfig } from "./types/config";
 
@@ -27,17 +28,18 @@ interface AppProps {
 }
 
 export function App({ config, msalInstance }: AppProps) {
-  if (config.authMode === "entra" && msalInstance) {
-    return (
-      <EntraAuthProvider instance={msalInstance} config={config}>
-        <Shell />
-      </EntraAuthProvider>
-    );
-  }
   return (
-    <DevAuthProvider>
-      <Shell />
-    </DevAuthProvider>
+    <ErrorBoundary>
+      {config.authMode === "entra" && msalInstance ? (
+        <EntraAuthProvider instance={msalInstance} config={config}>
+          <Shell />
+        </EntraAuthProvider>
+      ) : (
+        <DevAuthProvider>
+          <Shell />
+        </DevAuthProvider>
+      )}
+    </ErrorBoundary>
   );
 }
 

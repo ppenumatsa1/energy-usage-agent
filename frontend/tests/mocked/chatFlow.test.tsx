@@ -67,7 +67,7 @@ describe("chat flow (dev auth, mocked fetch)", () => {
     for (const [url] of fetchMock.mock.calls) expect(String(url)).toMatch(/^\/api\//);
   });
 
-  it("sends the conversationId on follow-ups and falls back to JSON when the stream has no result", async () => {
+  it("sends the conversationId on follow-ups and falls back to JSON once when the response is not a stream", async () => {
     let call = 0;
     const fetchMock = mockFetch({
       "GET /api/me": () => jsonResponse(me),
@@ -76,7 +76,10 @@ describe("chat flow (dev auth, mocked fetch)", () => {
         call += 1;
         const accept = new Headers(init.headers).get("Accept");
         if (call === 1) return sseResponse(sseBody(sampleResponse));
-        if (accept === "text/event-stream") return sseResponse(['event: status\ndata: {"stage":"thinking"}\n\n']);
+        if (accept === "text/event-stream") {
+          // e.g. a proxy that rewrote the response before anything was streamed
+          return new Response("buffered", { status: 200, headers: { "Content-Type": "text/plain" } });
+        }
         return jsonResponse({ ...sampleResponse, answer: "Last month you used 999 kWh.", correlationId: "corr-456" });
       },
     });
@@ -88,10 +91,130 @@ describe("chat flow (dev auth, mocked fetch)", () => {
 
     const chatCalls = fetchMock.mock.calls.filter(([url]) => url === "/api/chat");
     expect(chatCalls).toHaveLength(3);
+    expect(new Headers((chatCalls[2][1] as RequestInit).headers).get("Accept")).toBe("application/json");
     expect(JSON.parse((chatCalls[2][1] as RequestInit).body as string)).toEqual({
       message: "and last month?",
       conversationId: "conv-1",
     });
+  });
+
+  it.each([
+    ["ends without a result", () => sseResponse(['event: status\ndata: {"stage":"thinking"}\n\n'])],
+    [
+      "breaks mid-stream",
+      () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode('event: status\ndata: {"stage":"tool","tool":"get_usage"}\n\n'));
+            controller.error(new TypeError("network error"));
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream", "X-Correlation-Id": "corr-stream" },
+        });
+      },
+    ],
+  ])("never resends when the stream %s after it started", async (_name, makeResponse) => {
+    const fetchMock = mockFetch({
+      "GET /api/me": () => jsonResponse(me),
+      "GET /api/conversations": () => jsonResponse([]),
+      "POST /api/chat": () => makeResponse(),
+    });
+    render(<App config={devConfig} />);
+    await ask("Show my usage this month.");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The connection dropped before the answer arrived");
+    expect(alert).toHaveTextContent("check History or try again");
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/chat")).toHaveLength(1);
+    // The answer may have been saved: the history list is reloaded.
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([url]) => url === "/api/conversations")).toHaveLength(2),
+    );
+    expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("shows the reference ID of an interrupted stream", async () => {
+    mockFetch({
+      "GET /api/me": () => jsonResponse(me),
+      "GET /api/conversations": () => jsonResponse([]),
+      "POST /api/chat": () =>
+        new Response(new ReadableStream({ start: (c) => c.close() }), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream", "X-Correlation-Id": "corr-stream" },
+        }),
+    });
+    render(<App config={devConfig} />);
+    await ask("Show my usage this month.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("corr-stream");
+  });
+
+  it("maps a failed fetch to an offline message and only resends on an explicit click", async () => {
+    let call = 0;
+    const fetchMock = mockFetch({
+      "GET /api/me": () => jsonResponse(me),
+      "GET /api/conversations": () => jsonResponse([]),
+      "POST /api/chat": () => {
+        call += 1;
+        if (call === 1) throw new TypeError("Failed to fetch");
+        return sseResponse(sseBody(sampleResponse));
+      },
+    });
+    render(<App config={devConfig} />);
+    await ask("Show my usage this month.");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("You appear to be offline or we can't reach the service");
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/chat")).toHaveLength(1);
+    await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(/You used 1,234.57 kWh/)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/chat")).toHaveLength(2);
+  });
+
+  it("shows the Retry-After wait for 429 and no retry for invalid requests", async () => {
+    let call = 0;
+    mockFetch({
+      "GET /api/me": () => jsonResponse(me),
+      "GET /api/conversations": () => jsonResponse([]),
+      "POST /api/chat": () => {
+        call += 1;
+        if (call === 1) {
+          const response = problemResponse(429, "rate_limited");
+          response.headers.set("Retry-After", "17");
+          return response;
+        }
+        return problemResponse(422, "invalid_request", { correlationId: "corr-422" });
+      },
+    });
+    render(<App config={devConfig} />);
+    await ask("Show my usage this month.");
+    const limited = await screen.findByRole("alert");
+    expect(limited).toHaveTextContent("try again in 17 seconds");
+    expect(within(limited).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+
+    await ask("asdf");
+    await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
+    const invalid = screen.getAllByRole("alert")[1];
+    expect(invalid).toHaveTextContent("Please rephrase it");
+    expect(invalid).toHaveTextContent("corr-422");
+    expect(within(invalid).queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
+  it("does not show an error when the user starts a new conversation mid-question", async () => {
+    mockFetch({
+      "GET /api/me": () => jsonResponse(me),
+      "GET /api/conversations": () => jsonResponse([]),
+      "POST /api/chat": (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        }),
+    });
+    render(<App config={devConfig} />);
+    await ask("Show my usage this month.");
+    expect(await screen.findByRole("list", { name: "Conversation" })).toHaveTextContent("Show my usage this month.");
+    await userEvent.click(screen.getByRole("button", { name: /New conversation/ }));
+    await waitFor(() => expect(screen.queryByRole("list", { name: "Conversation" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("shows a friendly error with correlation id and retries", async () => {
@@ -109,7 +232,7 @@ describe("chat flow (dev auth, mocked fetch)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("The usage service is temporarily unavailable");
     expect(alert).toHaveTextContent("corr-err");
-    await userEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
     expect(await screen.findByText(/You used 1,234.57 kWh/)).toBeInTheDocument();
   });
 

@@ -70,11 +70,11 @@ hooks:
   postdeploy:
     posix:
       shell: sh
-      run: uv run python scripts/deploy_agent.py && uv run python scripts/verify_deployment.py
+      run: '[ -n "$DEPLOY_PARALLEL" ] || { uv run python scripts/deploy_agent.py && uv run python scripts/verify_deployment.py; }'
       interactive: false
       continueOnError: false
     windows:
       shell: pwsh
-      run: uv run python scripts/deploy_agent.py; if ($LASTEXITCODE -eq 0) { uv run python scripts/verify_deployment.py }
+      run: if (-not $env:DEPLOY_PARALLEL) { uv run python scripts/deploy_agent.py; if ($LASTEXITCODE -eq 0) { uv run python scripts/verify_deployment.py } }
       interactive: false
       continueOnError: false

@@ -1,13 +1,17 @@
 name: Deploy
 
+# Deploys only commits that passed CI: runs after the CI workflow finishes on a push to main.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
+  actions: read # find the last successful deploy (infra-change check)
 
 concurrency:
   group: deploy-${{ vars.AZURE_ENV_NAME }}
@@ -15,8 +19,12 @@ concurrency:
 
 jobs:
   deploy:
-    # Skipped until scripts/setup_ci.py has set the repository variables (also keeps forks green).
-    if: vars.AZURE_CLIENT_ID != ''
+    # Skipped until scripts/setup_ci.py has set the repository variables (also keeps forks green),
+    # and when CI did not pass.
+    if: >-
+      vars.AZURE_CLIENT_ID != '' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
     runs-on: ubuntu-latest
     env:
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
@@ -27,20 +35,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
 
       # Option B: CI deploys code; infra (Bicep, app registrations) is applied by a person with `azd up`.
-      # New code may need the new infra, so a push that changes infra stops here. `azd up` deploys that code too;
-      # a manual run (workflow_dispatch) skips this check.
+      # New code may need the new infra, so changes to infra since the last successful deploy stop here.
+      # `azd up` deploys that code too; a manual run (workflow_dispatch) skips this check.
       - name: Stop on infra changes
-        if: github.event_name == 'push'
+        if: github.event_name == 'workflow_run'
         env:
-          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          base="$BEFORE"
+          base=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow azure-dev.yml --status success \
+                   --limit 1 --json headSha --jq '.[0].headSha // empty')
           if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then base="HEAD~1"; fi
           if git diff --name-only "$base" HEAD 2>/dev/null | grep -qE '^(infra/|azure\.yaml$)'; then
-            echo "::error::This push changes infra/ or azure.yaml. CI deploys code only: run 'azd up' (provisions and deploys this code)."
+            echo "::error::Infra files changed since the last deploy. CI deploys code only: run 'azd up' (provisions and deploys this code), then run this workflow manually (gh workflow run azure-dev.yml) to mark it deployed."
             exit 1
           fi
 

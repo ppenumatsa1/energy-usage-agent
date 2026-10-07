@@ -1,5 +1,6 @@
 import type { ChatTurn } from "../hooks/useChat";
 import type { ChatResponse } from "../types/api";
+import { ErrorRef } from "./ErrorRef";
 import { formatDuration, formatTimestamp, plural, relativeTime } from "./format";
 import { AlertIcon, ClockIcon, RowsIcon, SparkIcon, ToolIcon } from "./Icons";
 import { QuestionChips } from "./QuestionChips";
@@ -124,14 +125,17 @@ export function AnswerCard({ turn, onRetry, onAsk, busy, expandAll }: Props) {
             </header>
             <p className="answer__text">{turn.error.message}</p>
             <div className="answer__error-actions">
-              <button type="button" className="btn btn--secondary btn--small" onClick={() => onRetry(turn.id)} disabled={busy}>
-                Retry
-              </button>
-              {turn.error.correlationId ? (
-                <span className="ref">
-                  Ref <code>{turn.error.correlationId}</code>
-                </span>
+              {turn.error.retryable ? (
+                <button
+                  type="button"
+                  className="btn btn--secondary btn--small"
+                  onClick={() => onRetry(turn.id)}
+                  disabled={busy}
+                >
+                  Try again
+                </button>
               ) : null}
+              <ErrorRef correlationId={turn.error.correlationId} />
             </div>
           </div>
         ) : null}

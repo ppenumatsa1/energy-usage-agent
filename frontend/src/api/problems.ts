@@ -22,15 +22,39 @@ export class ApiError extends Error {
   }
 }
 
-/** Raised when the network request itself fails (offline, DNS, CORS, aborted stream). */
+/** Raised when the network request itself fails before any response (offline, DNS, CORS). */
 export class NetworkError extends Error {
+  readonly code = "network_error";
+
   constructor(message = "Network request failed") {
     super(message);
     this.name = "NetworkError";
   }
 }
 
+/**
+ * Raised when a chat stream breaks after the server accepted the question.
+ * The turn may have completed server-side, so the client must not resend it automatically.
+ */
+export class StreamInterruptedError extends Error {
+  readonly code = "stream_interrupted";
+  readonly correlationId?: string;
+
+  constructor(message = "Stream interrupted", correlationId?: string) {
+    super(message);
+    this.name = "StreamInterruptedError";
+    this.correlationId = correlationId;
+  }
+}
+
 const GENERIC_MESSAGE = "Something went wrong. Please try again.";
+export const OFFLINE_MESSAGE =
+  "You appear to be offline or we can't reach the service. Check your connection and try again.";
+export const STREAM_INTERRUPTED_MESSAGE =
+  "The connection dropped before the answer arrived. Your question may still have been answered — check History or try again.";
+
+/** Problem codes where sending the same request again can't succeed. */
+const NOT_RETRYABLE = new Set(["not_onboarded", "invalid_request", "conversation_not_found", "unauthorized"]);
 
 export function problemMessage(problem: Problem, retryAfterSeconds?: number): string {
   switch (problem.code) {
@@ -48,6 +72,8 @@ export function problemMessage(problem: Problem, retryAfterSeconds?: number): st
       return "This conversation is no longer available. Start a new chat to continue.";
     case "unauthorized":
       return "Your session has expired. Signing you in again…";
+    case "internal_error":
+      return GENERIC_MESSAGE;
     default:
       break;
   }
@@ -71,10 +97,44 @@ export function problemMessage(problem: Problem, retryAfterSeconds?: number): st
 
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return problemMessage(error.problem, error.retryAfterSeconds);
-  if (error instanceof NetworkError) {
-    return "We couldn't reach the server. Check your connection and try again.";
-  }
+  if (error instanceof NetworkError) return OFFLINE_MESSAGE;
+  if (error instanceof StreamInterruptedError) return STREAM_INTERRUPTED_MESSAGE;
   return GENERIC_MESSAGE;
+}
+
+/** What the UI shows for a failed request. */
+export interface ErrorInfo {
+  message: string;
+  code?: string;
+  correlationId?: string;
+  /** True when sending the same request again may succeed (offered as an explicit "Try again"). */
+  retryable: boolean;
+  retryAfterSeconds?: number;
+}
+
+export function describeError(error: unknown): ErrorInfo {
+  const message = errorMessage(error);
+  if (error instanceof ApiError) {
+    const code = error.code;
+    const retryable = !(code && NOT_RETRYABLE.has(code)) && ![400, 401, 403, 404, 422].includes(error.status);
+    return {
+      message,
+      code,
+      correlationId: error.correlationId,
+      retryable,
+      retryAfterSeconds: error.retryAfterSeconds,
+    };
+  }
+  if (error instanceof StreamInterruptedError) {
+    return { message, code: error.code, correlationId: error.correlationId, retryable: true };
+  }
+  if (error instanceof NetworkError) return { message, code: error.code, retryable: true };
+  return { message, retryable: true };
+}
+
+/** True for user-initiated cancellation (new question, navigation), which is never shown as an error. */
+export function isAbortError(error: unknown, signal?: AbortSignal | null): boolean {
+  return Boolean(signal?.aborted) || (error instanceof DOMException && error.name === "AbortError");
 }
 
 function parseRetryAfter(value: string | null): number | undefined {

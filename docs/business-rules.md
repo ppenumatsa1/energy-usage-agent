@@ -55,7 +55,7 @@
   - Any other user gets "not found".
 - **BR-14 Conversation history.**
   - Each turn (question, answer, table, chart, assumptions, trace) is stored in the app-api database so a reopened conversation looks exactly as it did.
-  - Kept 30 days after the last activity, then deleted (`HISTORY_RETENTION_DAYS`). Deleting a conversation deletes its turns at once.
+  - Kept 30 days after the last activity (`HISTORY_RETENTION_DAYS`); after that it can't be opened or continued and is deleted by a background job. Deleting a conversation deletes its turns at once.
   - Only the owner can read it (BR-11). History is not a log: BR-12 still applies to audit logs.
 - **BR-13 Rate limit.** Per user (`tid:oid`), for example 20 requests/min **[OPEN]**.
 

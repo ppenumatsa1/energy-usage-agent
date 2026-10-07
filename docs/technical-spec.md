@@ -109,6 +109,13 @@ Deployment: the `azd` postdeploy hook runs `scripts/deploy_agent.py`, which crea
 
 Errors are problem+json with a `code`: `401 unauthorized` (missing or invalid token; the UI signs in again), `403 not_onboarded`, `404 conversation_not_found`, `422 invalid_request`, `429 rate_limited` (with `Retry-After`), `503 upstream_unavailable`. Errors found before streaming starts keep their HTTP status even for SSE requests.
 
+Error handling:
+- Every error body and the `X-Correlation-Id` header carry the correlation ID; unexpected 500s return `internal_error` with it. The web app shows it (copyable) next to the message.
+- History database down: `503 upstream_unavailable`. A turn whose answer was produced but couldn't be saved is still returned (`history_save_failed` logged).
+- energy-service: database unreachable or a query over `DB_STATEMENT_TIMEOUT_MS` (10 s) gives `503 upstream_unavailable` with `Retry-After: 5`; over MCP the tool returns `internal` with a try-again message. `/readyz` returns 503 when the database ping (3 s) fails.
+- Timeouts: Postgres connect `DB_CONNECT_TIMEOUT_SECONDS` (10) and pool wait `DB_POOL_TIMEOUT_SECONDS` (10) in both services (pooled connections are checked at checkout, so a Postgres restart doesn't fail requests); Foundry 120 s (10 s connect; SDK retries conversation calls, `responses.create` retried only on 429 or connection failure); MCP request 60 s; OBO 10 s (one retry); Graph profile 10 s (3 attempts).
+- SSE: a client disconnect cancels the turn (`chat_cancelled`), with no error event. The web app never resends a message by itself: a stream that breaks after it started shows `stream_interrupted` and reloads the conversation from History; "Try again" is a click and is hidden where resending can't help. Offline failures show `network_error`. A React error boundary catches render errors.
+
 Rate limit: 20 requests/min per `tid:oid` (`RATE_LIMIT_PER_MINUTE`), in memory per replica.
 
 ### Orchestration loop (`orchestration/`)
@@ -122,7 +129,7 @@ Rate limit: 20 requests/min per `tid:oid` (`RATE_LIMIT_PER_MINUTE`), in memory p
 4. Parse the final structured output.
 5. Projections build the table and chart from the captured outputs.
 
-Failure handling: an Azure OpenAI `content_filter` rejection (e.g. a jailbreak attempt) becomes a `refused` answer; other agent errors become `503 upstream_unavailable`. Errors raised inside the MCP client's task group are unwrapped so they keep their status. GenAI tracing (`AIProjectInstrumentor`) is best effort and never breaks a turn.
+Failure handling: an Azure OpenAI `content_filter` rejection (e.g. a jailbreak attempt) becomes a `refused` answer; other agent errors become `503 upstream_unavailable`. On any early exit (loop limit, MCP failure, submit failure, blocked output, cancellation) the open `function_call` items are closed with an `aborted` error output through `conversations.items.create` (does not run the model; 5 s, shielded from cancellation): Foundry rejects any new message while a call has no output. If an existing conversation still answers `400 No tool output found`, the turn starts a new Foundry conversation and retries once (`agent_conversation_reset`; earlier model context is lost, stored history is kept). An MCP result that doesn't parse becomes tool error `internal` (`mcp_result_invalid`). The loop limit error is raised only when the last response still asks for tools. Errors raised inside the MCP client's task group are unwrapped so they keep their status. GenAI tracing (`AIProjectInstrumentor`) is best effort and never breaks a turn.
 
 Conversation state: a Foundry conversation per chat holds the model context. The App API stores `conversationId → (tid, oid)` ([BR-11](business-rules.md#conversations-and-usage)) and every turn as shown to the user ([BR-14](business-rules.md#conversations-and-usage)), so a reopened conversation renders the same text, table, chart and trace. Tool calls are timed by a wrapper around the per-turn gateway, so the trace is the same for the fake and the Foundry agent.
 
@@ -141,7 +148,7 @@ conversations(conversation_id uuid PK, tid uuid, oid uuid, agent_conversation_id
 turns(turn_id bigserial PK, conversation_id FK ON DELETE CASCADE, question text, response jsonb, created_at)
 ```
 - Every conversation query filters by `(tid, oid)`; turns are read only after that ownership check.
-- Retention: conversations idle longer than `HISTORY_RETENTION_DAYS` (30) are deleted with their turns, checked when the user lists conversations.
+- Retention: conversations idle longer than `HISTORY_RETENTION_DAYS` (30) are hidden from the list and return 404 on open and chat. A background job in app-api deletes them with their turns and Foundry conversations: first about 60 s after start, then every `HISTORY_PURGE_INTERVAL_MINUTES` (60; `0` turns it off), `HISTORY_PURGE_BATCH_SIZE` (200) per run, `FOR UPDATE SKIP LOCKED` so replicas don't collide.
 
 - RLS is ON for `sites`, `meters`, `usage_readings` and `usage_daily`, with policy `customer_id = current_setting('app.customer_id')::uuid`.
 - The energy-service DB role is SELECT only and not the table owner (it cannot bypass RLS). It only reads `user_customer` through a narrow lookup.
@@ -163,7 +170,7 @@ turns(turn_id bigserial PK, conversation_id FK ON DELETE CASCADE, question text,
   - Bicep build + lint
   - customer-information scan against the `CUSTOMER_DENYLIST` secret
   - Later: mypy, agent evals (smoke set), Bicep what-if
-- Main branch (`.github/workflows/azure-dev.yml`): `azd deploy` to dev (code + agent version + verify). Infra is applied by a person with `azd up`; a push that changes infra stops CI. Prod **[OPEN]**.
+- Main branch (`.github/workflows/azure-dev.yml`): `azd deploy` to dev (code + agent version + verify). Runs only after CI passes on `main`. Infra is applied by a person with `azd up`; infra changes since the last deploy stop it. Prod **[OPEN]**.
 
 ## 11. Testing
 - **Unit:** date resolution, validation, SQL builders, projections.

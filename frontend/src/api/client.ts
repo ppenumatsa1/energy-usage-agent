@@ -10,7 +10,7 @@ import type {
   StatusEvent,
   StatusResponse,
 } from "../types/api";
-import { ApiError, NetworkError, toApiError } from "./problems";
+import { ApiError, NetworkError, StreamInterruptedError, isAbortError as isAbort, toApiError } from "./problems";
 import { readSseStream } from "./sse";
 
 export interface TokenSource {
@@ -35,16 +35,15 @@ export interface ApiClient {
   deleteConversation(conversationId: string): Promise<void>;
 }
 
-/** Signals that streaming did not work and the caller should retry with JSON. */
+/**
+ * Signals that the response is not a stream at all (no SSE event was received),
+ * so the caller may safely ask again for JSON.
+ */
 class StreamUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "StreamUnavailableError";
   }
-}
-
-function isAbort(error: unknown, signal?: AbortSignal): boolean {
-  return Boolean(signal?.aborted) || (error instanceof DOMException && error.name === "AbortError");
 }
 
 async function safeFetch(path: string, init: RequestInit): Promise<Response> {
@@ -101,6 +100,7 @@ export function createApiClient(auth: TokenSource): ApiClient {
       throw new StreamUnavailableError(`Unexpected content type: ${contentType || "none"}`);
     }
 
+    const correlationId = response.headers.get("x-correlation-id") ?? undefined;
     let result: ChatResponse | undefined;
     let problem: Problem | undefined;
     try {
@@ -115,12 +115,13 @@ export function createApiClient(auth: TokenSource): ApiClient {
             problem = JSON.parse(event.data) as Problem;
           }
         } catch {
-          // Ignore a malformed event; a missing result triggers the JSON fallback.
+          // Ignore a malformed event; a missing result is reported as an interrupted stream.
         }
       });
     } catch (error) {
       if (isAbort(error, options.signal)) throw error;
-      if (!result && !problem) throw new StreamUnavailableError("Stream interrupted");
+      // The server already accepted the question: report it, never resend automatically.
+      if (!result && !problem) throw new StreamInterruptedError("Stream interrupted", correlationId);
     }
 
     if (problem) {
@@ -128,7 +129,7 @@ export function createApiClient(auth: TokenSource): ApiClient {
       if (status === 401) auth.onUnauthorized();
       throw new ApiError(status, problem);
     }
-    if (!result) throw new StreamUnavailableError("Stream ended without a result");
+    if (!result) throw new StreamInterruptedError("Stream ended without a result", correlationId);
     return result;
   }
 
@@ -136,8 +137,9 @@ export function createApiClient(auth: TokenSource): ApiClient {
     try {
       return await chatStream(body, options);
     } catch (error) {
-      if (error instanceof ApiError || isAbort(error, options.signal)) throw error;
-      // Streaming failed (network, proxy buffering, missing result): fall back to JSON once.
+      // Only a response that never was a stream falls back to JSON (once). Anything after the
+      // server accepted the question (interrupted stream, network error, problem) is surfaced as-is.
+      if (!(error instanceof StreamUnavailableError) || isAbort(error, options.signal)) throw error;
       return chatJson(body, options);
     }
   }

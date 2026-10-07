@@ -1111,3 +1111,22 @@
     justify-content: flex-start;
   }
 }
+
+.ref__id {
+  user-select: all;
+}
+
+.ref__copy {
+  padding: 0 0.25rem;
+  font: inherit;
+  color: var(--muted);
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.ref__copy:hover,
+.ref__copy:focus-visible {
+  color: var(--text-2);
+}

@@ -42,8 +42,11 @@ def build_container(settings: EnergySettings, validator: TokenValidator | None =
             user=settings.db_user,
             entra_auth=settings.db_entra_auth,
             client_id=settings.azure_client_id,
+            connect_timeout=settings.db_connect_timeout_seconds,
+            timeout=settings.db_pool_timeout_seconds,
         )
-        directory, repository = PgCustomerDirectory(pool), PgUsageRepository(pool)
+        directory = PgCustomerDirectory(pool)
+        repository = PgUsageRepository(pool, statement_timeout_ms=settings.db_statement_timeout_ms)
     return Container(
         settings=settings,
         service=UsageService(directory, repository),

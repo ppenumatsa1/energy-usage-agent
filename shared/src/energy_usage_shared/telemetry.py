@@ -12,6 +12,9 @@ from fastapi.telemetry import TelemetryConfig
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 CORRELATION_HEADER = "x-correlation-id"
+# Also kept in the ASGI scope: code that runs outside the request's context (the outermost error
+# handler, MCP tool task groups) can still read it.
+CORRELATION_SCOPE_KEY = "energy_usage.correlation_id"
 _correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 _SAFE_ID = re.compile(r"^[A-Za-z0-9\-]{8,64}$")
 _configured = False
@@ -103,6 +106,7 @@ class CorrelationIdMiddleware:
                 break
         cid = inbound if inbound and _SAFE_ID.match(inbound) else new_correlation_id()
         token = _correlation_id.set(cid)
+        scope[CORRELATION_SCOPE_KEY] = cid
 
         async def send_with_header(message: Message) -> None:
             if message["type"] == "http.response.start":

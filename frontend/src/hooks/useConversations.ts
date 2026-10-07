@@ -1,13 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../api/client";
-import { errorMessage } from "../api/problems";
+import { describeError, type ErrorInfo } from "../api/problems";
 import type { ConversationSummary } from "../types/api";
 
 export function useConversations(api: ApiClient) {
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ErrorInfo | null>(null);
   const [version, setVersion] = useState(0);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -19,7 +27,7 @@ export function useConversations(api: ApiClient) {
         setError(null);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(errorMessage(err));
+        if (!cancelled) setError(describeError(err));
       })
       .finally(() => {
         if (!cancelled) setLoaded(true);
@@ -41,10 +49,11 @@ export function useConversations(api: ApiClient) {
     async (conversationId: string) => {
       try {
         await api.deleteConversation(conversationId);
+        if (!mounted.current) return;
         drop(conversationId);
         setError(null);
       } catch (err) {
-        setError(errorMessage(err));
+        if (mounted.current) setError(describeError(err));
       }
     },
     [api, drop],

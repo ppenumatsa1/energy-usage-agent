@@ -45,7 +45,7 @@ Specs first, then structure, then build. Implementation approved and started on 
   - Bicep + azd + GitHub Actions
 - Sign-in: single tenant; people from other organizations are guests the tenant admin invited (outside the app). Data access only via the `(tid, oid)` → customer mapping + RLS. Flow: `docs/auth-flow.md`.
 - Cutovers, not fallbacks: replaced code and settings are removed, not kept alongside.
-- No manual install steps: `azd up` (preflight, Bicep incl. app registrations, data + self-mapping, deploy, verify). CI/CD Option B: CI (`azure-dev.yml`) deploys code + agent with OIDC (`setup_ci.py`, no admin); infra changes are applied by a person with `azd up`, and a push that changes infra stops CI.
+- No manual install steps: `azd up` (preflight, Bicep incl. app registrations, data + self-mapping, deploy, verify). CI/CD Option B: CI (`azure-dev.yml`) deploys code + agent with OIDC (`setup_ci.py`, no admin); infra changes are applied by a person with `azd up`, CI deploys only after the CI workflow passes, and infra changes since the last deploy stop it.
 - Evals: `run_evals.py --mode auto` runs the full eval (judges) only when the agent changed; otherwise a quick deterministic subset.
 - Deploys: incremental seed (no re-seed on provision), agent version only when its definition changes, `scripts/deploy_parallel.py` for multi-service code deploys.
 - Identity Option B: the App API runs the tool loop with a user OBO token; Foundry never sees user tokens.
@@ -75,7 +75,8 @@ Specs first, then structure, then build. Implementation approved and started on 
 2. Prove the from-scratch install in a fresh environment by following `AGENTS.md` (`azd env new` + `azd up --no-prompt`), then `azd down --purge`; automate app-registration cleanup (a `postdown` hook) so teardown has no manual step.
 3. Evals: add custom judges that understand refusals/clarifications (built-in judges reward fulfilling any request); grow the golden set from production traces.
 4. Remove the tracing workaround when azure-ai-projects checks `is_recording()` itself.
-5. Hardening: Key Vault roles, rate limit store for >1 replica, private networking (below).
+5. Review fixes P2: DST-aware hourly totals, real agent check in `/api/status`, Azure CLI pre-authorization `azp` check, mypy errors, unused Key Vault (P0/P1 + error handling done 2026-10-07).
+6. Hardening: Key Vault roles, rate limit store for >1 replica, private networking (below).
 
 ## Notes
 - Private networking later: Foundry private networking + a dedicated MCP subnet (foundry-samples `19-private-network-agent-tools`).

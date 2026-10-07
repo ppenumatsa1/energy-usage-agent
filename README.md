@@ -176,8 +176,8 @@ TOKEN=$(az account get-access-token --scope "$(azd env get-value API_SCOPE)" --q
 
 CI/CD (GitHub Actions, OIDC, no secrets, no admin):
 1. Run `uv run python scripts/setup_ci.py` once from a clone with a GitHub remote (answer **No** when azd offers to push).
-2. Every push to `main` deploys code and the agent, then verifies (steps 5–6).
-3. Infra or app-registration changes: a person runs `azd up` (steps 1–6). A push that changes `infra/` or `azure.yaml` makes CI stop with that instruction.
+2. Every push to `main` that passes CI deploys code and the agent, then verifies (steps 5–6).
+3. Infra or app-registration changes: a person runs `azd up` (steps 1–6). If `infra/` or `azure.yaml` changed since the last deploy, the Deploy workflow stops with that instruction; after `azd up`, run it once by hand (`gh workflow run azure-dev.yml`).
 
 Day-2 changes (measured on dev):
 | Change | Command | Time |

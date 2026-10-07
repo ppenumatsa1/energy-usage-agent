@@ -1,7 +1,20 @@
+import asyncio
 import json
+import logging
+from contextlib import asynccontextmanager
+from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
+from psycopg_pool import PoolTimeout
 
+from energy_usage_app_api.api.routers.chat import _stream
+from energy_usage_app_api.application.chat_service import PreparedChat
+from energy_usage_app_api.application.errors import UpstreamUnavailable
+from energy_usage_app_api.infrastructure.conversations_pg import PgConversationStore
+from energy_usage_app_api.testing.fake_agent import FakeAgentRunner
+from energy_usage_app_api.testing.memory import MemoryConversationStore
+from energy_usage_shared.auth import Principal
 from energy_usage_shared.contracts import ToolError
 
 
@@ -104,3 +117,96 @@ def test_dev_sign_in(client: TestClient) -> None:
     assert {u["id"] for u in users} == {"a1", "a2", "b1", "x1"}
     tok = client.post("/api/dev/token", json={"user": "a1"}).json()["accessToken"]
     assert client.get("/api/me", headers={"Authorization": f"Bearer {tok}"}).status_code == 200
+
+
+class BrokenPool:
+    """A pool whose database is down (psycopg raises PoolTimeout, an OperationalError)."""
+
+    def connection(self):  # type: ignore[no-untyped-def]
+        @asynccontextmanager
+        async def _conn():  # type: ignore[no-untyped-def]
+            raise PoolTimeout("couldn't get a connection after 30.00 sec to host=db.internal")
+            yield
+
+        return _conn()
+
+
+def test_database_down_is_503_without_details(client_factory, auth) -> None:  # type: ignore[no-untyped-def]
+    with client_factory(conversations=PgConversationStore(BrokenPool())) as c:  # type: ignore[arg-type]
+        listed = c.get("/api/conversations", headers=auth("a1"))
+        follow_up = c.post(
+            "/api/chat", json={"message": "usage", "conversationId": str(uuid4())}, headers=auth("a1")
+        )
+        status = c.get("/api/status", headers=auth("a1")).json()
+    for r in (listed, follow_up):
+        assert r.status_code == 503 and r.json()["code"] == "upstream_unavailable"
+        assert r.json()["correlationId"] and "db.internal" not in r.text and "sec" not in r.text
+    assert {s["id"]: s["status"] for s in status["components"]}["database"] == "down"
+
+
+class FailingStore(MemoryConversationStore):
+    async def create(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        raise UpstreamUnavailable("down")
+
+    async def touch(self, conversation_id):  # type: ignore[no-untyped-def]
+        raise UpstreamUnavailable("down")
+
+    async def add_turn(self, conversation_id, turn):  # type: ignore[no-untyped-def]
+        raise UpstreamUnavailable("down")
+
+
+def test_answer_survives_history_save_failure(client_factory, auth, caplog) -> None:  # type: ignore[no-untyped-def]
+    with client_factory(conversations=FailingStore()) as c:
+        r = c.post("/api/chat", json={"message": "usage last month"}, headers=auth("a1"))
+    assert r.status_code == 200 and r.json()["status"] == "ok" and r.json()["table"]["rows"]
+    assert "history_save_failed" in caplog.text and "turn_save_failed" in caplog.text
+
+
+class ExplodingAgent(FakeAgentRunner):
+    async def run_turn(self, message, agent_conversation_id, tools, emit):  # type: ignore[no-untyped-def]
+        await emit("status", {"stage": "tool", "tool": "get_usage"})
+        raise RuntimeError("SELECT secret FROM internal_table at https://internal.example")
+
+
+def test_sse_error_event_has_correlation_id_and_no_internals(client_factory, auth) -> None:  # type: ignore[no-untyped-def]
+    with (
+        client_factory(agent=ExplodingAgent()) as c,
+        c.stream(
+            "POST",
+            "/api/chat",
+            json={"message": "usage"},
+            headers={**auth("a1"), "Accept": "text/event-stream"},
+        ) as r,
+    ):
+        text = "".join(r.iter_text())
+    events = [line.split(":", 1)[1].strip() for line in text.splitlines() if line.startswith("event:")]
+    data = [json.loads(line.split(":", 1)[1]) for line in text.splitlines() if line.startswith("data:")]
+    assert events[-1] == "error" and data[-1]["code"] == "internal_error" and data[-1]["status"] == 500
+    assert data[-1]["correlationId"] == r.headers["x-correlation-id"]
+    assert "secret" not in text and "internal.example" not in text
+
+
+async def test_sse_client_disconnect_is_logged_as_cancelled(caplog) -> None:  # type: ignore[no-untyped-def]
+    started = asyncio.Event()
+
+    class SlowService:
+        async def answer(self, prepared, emit):  # type: ignore[no-untyped-def]
+            await emit("status", {"stage": "thinking"})
+            started.set()
+            await asyncio.sleep(3600)
+
+    prepared = PreparedChat(Principal(tid="t", oid="o"), "usage", "tok", None, "cid-123")
+
+    async def consume() -> None:
+        async for _ in _stream(SlowService(), prepared):  # type: ignore[arg-type]
+            pass
+
+    caplog.set_level(logging.INFO, logger="energy_usage.chat")
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(started.wait(), 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    cancelled = [r for r in caplog.records if r.message == "chat_cancelled"]
+    assert cancelled and cancelled[0].levelno == logging.INFO and cancelled[0].correlation_id == "cid-123"
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
