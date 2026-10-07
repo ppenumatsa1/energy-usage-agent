@@ -5,6 +5,8 @@ import asyncio
 import json
 import logging
 import os
+import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from opentelemetry import trace
@@ -25,6 +27,8 @@ FOUNDRY_CONNECT_TIMEOUT_SECONDS = 10.0
 FOUNDRY_MAX_RETRIES = 2
 RETRY_BACKOFF_SECONDS = 1.0
 CLOSE_TIMEOUT_SECONDS = 5.0
+READY_TIMEOUT_SECONDS = 5.0
+READY_CACHE_SECONDS = 60.0
 ABORTED_OUTPUT = json.dumps(
     {
         "error": {
@@ -66,7 +70,7 @@ def _guard_non_recording_spans() -> None:
             original(self, span, attribute_name, new_messages)
 
     guarded._energy_usage_guarded = True  # type: ignore[attr-defined]
-    cls._append_to_message_attribute = guarded
+    cls._append_to_message_attribute = guarded  # type: ignore[method-assign]
 
 
 def is_content_filtered(exc: BaseException) -> bool:
@@ -139,8 +143,17 @@ def parse_output(text: str) -> AgentOutput:
 
 
 class FoundryAgentRunner:
-    def __init__(self, openai: Any, agent_name: str, max_rounds: int, closers: tuple[Any, ...] = ()) -> None:
+    def __init__(
+        self,
+        openai: Any,
+        agent_name: str,
+        max_rounds: int,
+        get_agent: Callable[[], Awaitable[Any]],
+        closers: tuple[Any, ...] = (),
+    ) -> None:
         self._openai = openai
+        self._get_agent = get_agent
+        self._ready: tuple[float, bool] | None = None
         # Model calls are not idempotent (a timed-out request may already have been applied), so the SDK
         # must not retry them; `_create_response` retries only failures that were never processed.
         self._responses = openai.with_options(max_retries=0).responses
@@ -164,7 +177,13 @@ class FoundryAgentRunner:
             timeout=Timeout(FOUNDRY_TIMEOUT_SECONDS, connect=FOUNDRY_CONNECT_TIMEOUT_SECONDS),
             max_retries=FOUNDRY_MAX_RETRIES,
         )
-        return cls(openai, agent_name, max_rounds, closers=(project, credential))
+        return cls(
+            openai,
+            agent_name,
+            max_rounds,
+            get_agent=lambda: project.agents.get(agent_name),
+            closers=(project, credential),
+        )
 
     async def run_turn(
         self, message: str, agent_conversation_id: str | None, tools: ToolGateway, emit: Emit
@@ -316,6 +335,20 @@ class FoundryAgentRunner:
 
     async def forget(self, agent_conversation_id: str) -> None:
         await self._openai.conversations.delete(agent_conversation_id)
+
+    async def ready(self) -> bool:
+        """The agent exists and this identity can reach it. Cached so status polling doesn't hit Foundry."""
+        now = time.monotonic()
+        if self._ready and now - self._ready[0] < READY_CACHE_SECONDS:
+            return self._ready[1]
+        try:
+            await asyncio.wait_for(self._get_agent(), READY_TIMEOUT_SECONDS)
+            ok = True
+        except Exception as exc:
+            _log.warning("agent_not_ready", extra={"event": "agent_not_ready", "error": type(exc).__name__})
+            ok = False
+        self._ready = (now, ok)
+        return ok
 
     async def aclose(self) -> None:
         await self._openai.close()

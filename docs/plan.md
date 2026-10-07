@@ -18,7 +18,7 @@ Specs first, then structure, then build. Implementation approved and started on 
 | 3. Project structure | `docs/project-structure.md` | Agreed v0.3 |
 | 4. Local build (no Azure) | all services, agent definition, infra, CI | **Done**: runs end to end locally |
 | 5. Azure deployment + spikes | `azd up`, real agent, OBO | **Done**: deployed to dev; smoke, E2E, evals, tracing verified |
-| 6. Evals + hardening | Foundry evals, Playwright E2E, mypy in CI | Evals + E2E done (run by hand); CI wiring and mypy pending |
+| 6. Evals + hardening | Foundry evals, Playwright E2E, mypy in CI | Evals + E2E done (run by hand), mypy in CI; CI deploy wiring pending |
 
 ## Build status
 | Component | State | Verified by |
@@ -71,12 +71,11 @@ Specs first, then structure, then build. Implementation approved and started on 
 2. ~~Prompt agent function tools + JSON-schema output~~: works in Azure.
 
 ## Next steps
-1. CI: pushed to GitHub (CI workflow green; Deploy skipped until set up); run `scripts/setup_ci.py`, first deploy run; decide how CI gets a user token for smoke/evals (`VERIFY_TOKEN`); add the `CUSTOMER_DENYLIST` secret; add mypy.
+1. CI: pushed to GitHub (CI workflow green; Deploy skipped until set up); run `scripts/setup_ci.py`, first deploy run; decide how CI gets a user token for smoke/evals (`VERIFY_TOKEN`); add the `CUSTOMER_DENYLIST` secret.
 2. Prove the from-scratch install in a fresh environment by following `AGENTS.md` (`azd env new` + `azd up --no-prompt`), then `azd down --purge`; automate app-registration cleanup (a `postdown` hook) so teardown has no manual step.
 3. Evals: add custom judges that understand refusals/clarifications (built-in judges reward fulfilling any request); grow the golden set from production traces.
 4. Remove the tracing workaround when azure-ai-projects checks `is_recording()` itself.
-5. Review fixes P2: DST-aware hourly totals, real agent check in `/api/status`, Azure CLI pre-authorization `azp` check, mypy errors, unused Key Vault (P0/P1 + error handling done 2026-10-07).
-6. Hardening: Key Vault roles, rate limit store for >1 replica, private networking (below).
+5. Hardening: rate limit store for >1 replica, private networking (below). (Review fixes P0–P2, error handling, Key Vault removal done 2026-10-07.)
 
 ## Notes
 - Private networking later: Foundry private networking + a dedicated MCP subnet (foundry-samples `19-private-network-agent-tools`).

@@ -7,7 +7,6 @@
 |---|---|
 | `modules/monitoring.bicep` | Log Analytics workspace, workspace-based Application Insights |
 | `modules/registry.bicep` | Azure Container Registry (Basic, admin user off) |
-| `modules/keyvault.bicep` | Key Vault (RBAC mode, no secrets or role assignments by default) |
 | `modules/identity.bicep` | One user-assigned managed identity + AcrPull on the registry. Used 3 times: web, app-api, energy-service |
 | `modules/postgres.bicep` | PostgreSQL Flexible Server 16, Burstable B1ms, **Entra-only auth** (password auth disabled), database `energy`, firewall rules, Entra admin = deployer |
 | `modules/foundry.bicep` | Foundry account (`AIServices`, `allowProjectManagement`, custom subdomain, local auth off), project, model deployment, App Insights connection (portal Tracing tab), "Azure AI User" for app-api identity, deployer and the project identity (cloud evaluations) |
@@ -37,7 +36,7 @@ Set them with `azd env set <NAME> <value>`. `main.parameters.json` maps each one
 | `CLIENT_IP_ADDRESS` | `clientIpAddress` | auto | The deployer's public IPv4, for the Postgres firewall rule. Set by `scripts/preflight.py` |
 | `AZURE_AI_LOCATION` | `aiLocation` | no | Foundry region override when the model isn't available in `AZURE_LOCATION` |
 | `AZURE_PIPELINE_PRINCIPAL_ID` | `pipelinePrincipalId` | no | Object ID of the CI identity; gets Azure AI User on Foundry so CI can publish the agent. Set by `scripts/setup_ci.py` |
-| `ENTRA_PREAUTHORIZE_AZURE_CLI` | `preauthorizeAzureCli` | no | Default `true`: the Azure CLI may get user tokens for `Chat.Ask`, so scripts can test as you. Set `false` outside dev |
+| `ENTRA_PREAUTHORIZE_AZURE_CLI` | `preauthorizeAzureCli` | no | Default `true`: the Azure CLI may get user tokens for `Chat.Ask` and app-api accepts them (`AUTH_ALLOWED_CLIENT_IDS`), so scripts and the post-deploy verify can test as you. Set `false` outside dev (then run smoke/evals with a token from the web app) |
 | `AZURE_AI_MODEL_NAME` / `_VERSION` / `_SKU` / `_CAPACITY` | `modelName` / `modelVersion` / `modelSkuName` / `modelCapacity` | no | Defaults `gpt-5.6-luna` / `2026-07-09` / `GlobalStandard` / `30` (K TPM). Check quota first |
 | `TRACE_CONTENT` | `traceContent` | no | Default `false`. `true` puts message content (questions, answers, tool result rows) in GenAI spans; use only with synthetic data (`azd env set TRACE_CONTENT true`, then `azd provision`) |
 | `SERVICE_<NAME>_RESOURCE_EXISTS` | `webExists` / `appApiExists` / `energyServiceExists` | auto | Set by azd before each provision, see below |
@@ -88,7 +87,7 @@ The placeholder listens on port 80, not on the app's target port. So on the very
 - `POSTGRES_HOST`, `POSTGRES_DATABASE`, `POSTGRES_ADMIN_USER`
 - `ENERGY_SERVICE_IDENTITY_NAME`, `ENERGY_SERVICE_IDENTITY_CLIENT_ID`
 - `APP_API_IDENTITY_NAME`, `APP_API_IDENTITY_CLIENT_ID`, `APP_API_IDENTITY_PRINCIPAL_ID`
-- `FRONTEND_URL`, `KEY_VAULT_NAME`
+- `FRONTEND_URL`
 - `WEB_APP_ID`, `APP_API_APP_ID`, `ENERGY_SERVICE_APP_ID`, `API_SCOPE`, `ENERGY_SERVICE_SCOPE`
 - `AZURE_LOCATION`, `AZURE_TENANT_ID`
 

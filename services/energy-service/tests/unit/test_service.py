@@ -108,3 +108,12 @@ async def test_coverage_reports_gaps(service: UsageService, caller) -> None:
     # Customer 3 gap: 10-11 days before DATA_END; today has no data yet.
     assert {"from": "2026-03-03", "to": "2026-03-04", "days": 2} in r.rows
     assert r.summary["days_in_range"] == 30
+
+
+async def test_hourly_keeps_both_repeated_hours_on_dst_fall_back(service: UsageService, caller) -> None:
+    back = await service.get_usage(caller("a1"), "2025-11-02", "2025-11-02", Granularity.HOUR)
+    periods = [row["period"] for row in back.rows]
+    assert len(periods) == 25
+    assert periods[1:3] == ["2025-11-02 01:00 CDT", "2025-11-02 01:00 CST"]
+    forward = await service.get_usage(caller("a1"), "2026-03-08", "2026-03-08", Granularity.HOUR)
+    assert len(forward.rows) == 23

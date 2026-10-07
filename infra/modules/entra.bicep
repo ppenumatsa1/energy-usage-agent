@@ -122,5 +122,7 @@ resource energySp 'Microsoft.Graph/servicePrincipals@v1.0' = {
 output webAppId string = web.appId
 output appApiAppId string = api.appId
 output energyServiceAppId string = energy.appId
+@description('Clients allowed to call app-api (checked against the token `azp`): the web app, plus the Azure CLI when pre-authorized.')
+output appApiClientIds string = join(concat([web.appId], preauthorizeAzureCli ? [azureCliClientId] : []), ',')
 output apiScope string = '${apiUri}/Chat.Ask'
 output energyServiceScope string = '${energyUri}/Energy.Read'

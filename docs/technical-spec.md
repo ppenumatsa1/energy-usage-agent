@@ -35,7 +35,7 @@ Created by `infra/modules/entra.bicep` on every `azd provision`; names are `ener
 | app-api | Web API (confidential, federated credential via managed identity) | Exposes `Chat.Ask`; requests `Energy.Read` (OBO) |
 | energy-service | Web API | Exposes `Energy.Read`. One audience for both `/v1` and `/mcp` |
 
-- Only accounts in the home tenant sign in: members, and guests the tenant admin has invited. Pre-authorization means no consent prompts. Services accept tokens only from `AUTH_TENANT_ID`.
+- Only accounts in the home tenant sign in: members, and guests the tenant admin has invited. Pre-authorization means no consent prompts. Services accept tokens only from `AUTH_TENANT_ID` and only from the clients in `AUTH_ALLOWED_CLIENT_IDS` (token `azp`): app-api accepts the web app, plus the Azure CLI when `ENTRA_PREAUTHORIZE_AZURE_CLI` is `true` (scripts test as you); energy-service accepts app-api only.
 - Signing in is not access: data needs a `(tid, oid)` → customer mapping (BR-2) and Postgres RLS.
 - Token flow, settings and failure screens: [auth-flow](auth-flow.md).
 
@@ -103,7 +103,7 @@ Deployment: the `azd` postdeploy hook runs `scripts/deploy_agent.py`, which crea
 - `GET /api/conversations/{id}`: `{conversationId, title, createdAt, updatedAt, turns[{question, response}]}`, where `response` is the stored `ChatResponse` exactly as shown. 404 `conversation_not_found` if missing, expired or not yours.
 - `DELETE /api/conversations/{id}` (204): removes the record, its turns and the Foundry conversation (best effort).
 - `GET /api/me`: `{onboarded, customerName, timezone, userName}`
-- `GET /api/status` (signed in, onboarding not required): `{components[{id (api|energy|database|agent), label, status (ok|down), detail}], historyRetentionDays}` for the header status pills. Energy readiness comes from the energy-service `/readyz`.
+- `GET /api/status` (signed in, onboarding not required): `{components[{id (api|energy|database|agent), label, status (ok|down), detail}], historyRetentionDays}` for the header status pills. Energy readiness comes from the energy-service `/readyz`; the agent is `down` when app-api can't read the Foundry agent definition (5 s limit, result cached 60 s).
 - `GET /healthz`
 - Dev only (`AUTH_MODE=dev`, never in Azure): `GET /api/dev/users`, `POST /api/dev/token {user}`.
 
@@ -159,17 +159,17 @@ turns(turn_id bigserial PK, conversation_id FK ON DELETE CASCADE, question text,
   - `web` is the only external app. Its nginx proxies same-origin `/api` to app-api.
   - `app-api` and `energy-service` are **internal**, and both still require a JWT.
 - Postgres: Entra-only auth; firewall allows Azure services (Container Apps have no fixed outbound IP without a VNet) plus the deployer's IP for migrations and seed. Private networking replaces both later.
-- ACR pulls use managed identity. Key Vault holds anything that cannot use a managed identity or federated credential.
+- No secrets: Postgres, Foundry, ACR and App Insights use managed identities, OBO uses a federated credential, CI uses OIDC. So there is no Key Vault; add one only when something can't use a managed identity or federated credential.
 - Later: private networking ([architecture: physical view](architecture.md#4-physical-view)).
 
 ## 10. CI/CD
 - GitHub Actions with OIDC + `azd`.
 - PR checks (`.github/workflows/ci.yml`):
-  - ruff lint + format, eslint
+  - ruff lint + format, mypy, eslint
   - pytest (including RLS tests on a Postgres service container and architecture contract tests), vitest, frontend build
   - Bicep build + lint
   - customer-information scan against the `CUSTOMER_DENYLIST` secret
-  - Later: mypy, agent evals (smoke set), Bicep what-if
+  - Later: agent evals (smoke set), Bicep what-if
 - Main branch (`.github/workflows/azure-dev.yml`): `azd deploy` to dev (code + agent version + verify). Runs only after CI passes on `main`. Infra is applied by a person with `azd up`; infra changes since the last deploy stop it. Prod **[OPEN]**.
 
 ## 11. Testing

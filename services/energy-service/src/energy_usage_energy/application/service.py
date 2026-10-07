@@ -32,7 +32,11 @@ Clock = Callable[[], datetime]
 
 def _fmt_period(p: datetime | date, granularity: Granularity | BreakdownGranularity) -> str:
     if granularity == Granularity.HOUR and isinstance(p, datetime):
-        return p.strftime("%Y-%m-%d %H:00")
+        label = p.strftime("%Y-%m-%d %H:00")
+        # The hour repeated on DST fall-back appears twice; the zone name (e.g. CDT/CST) tells them apart.
+        if p.replace(fold=0).utcoffset() != p.replace(fold=1).utcoffset():
+            label += f" {p.tzname()}"
+        return label
     if granularity in (Granularity.MONTH, BreakdownGranularity.MONTH):
         return p.strftime("%Y-%m")
     return p.strftime("%Y-%m-%d")
@@ -47,8 +51,7 @@ def _offset(p: datetime | date, rng: DateRange, granularity: Granularity) -> int
     if granularity == Granularity.MONTH:
         return (p.year - rng.start.year) * 12 + p.month - rng.start.month
     if granularity == Granularity.HOUR and isinstance(p, datetime):
-        start = datetime.combine(rng.start, datetime.min.time())
-        return int((p.replace(tzinfo=None) - start).total_seconds() // 3600)
+        return int((p.astimezone(UTC) - rng.start_utc).total_seconds() // 3600)
     day = p.date() if isinstance(p, datetime) else p
     return (day - rng.start).days
 

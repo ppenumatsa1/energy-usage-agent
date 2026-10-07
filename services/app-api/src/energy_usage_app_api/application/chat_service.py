@@ -285,6 +285,7 @@ class ChatService:
 
     async def status(self) -> StatusResponse:
         energy_ok = await self._profile.ready()
+        agent_ok = await self._agent.ready()
         try:
             await self._conversations.ping()
             db_ok = True
@@ -308,7 +309,9 @@ class ChatService:
                 StatusComponent(
                     id="database", label="History", status="ok" if db_ok else "down", detail=db_detail
                 ),
-                StatusComponent(id="agent", label="Agent", status="ok", detail=agent_detail),
+                StatusComponent(
+                    id="agent", label="Agent", status="ok" if agent_ok else "down", detail=agent_detail
+                ),
             ],
             history_retention_days=self._retention_days,
         )

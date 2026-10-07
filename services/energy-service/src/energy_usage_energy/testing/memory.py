@@ -3,7 +3,7 @@
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -27,11 +27,14 @@ class _CustomerData:
         self.customer = customer
         tz = ZoneInfo(customer.timezone)
         self.daily: dict[tuple[str, str, date], float] = defaultdict(float)
+        self.tz = tz
+        # Keyed by the UTC instant of the local hour, so the repeated hour on DST fall-back stays two keys.
         self.hourly: dict[tuple[str, str, datetime], float] = defaultdict(float)
         for site_id, meter_id, ts, kwh in iter_hourly(customer, start, end):
             local = ts.astimezone(tz)
             self.daily[(site_id, meter_id, local.date())] += kwh
-            self.hourly[(site_id, meter_id, local.replace(minute=0, tzinfo=None))] += kwh
+            hour = local.replace(minute=0, second=0, microsecond=0).astimezone(UTC)
+            self.hourly[(site_id, meter_id, hour)] += kwh
 
 
 def iter_hourly(customer: SynthCustomer, start: date, end: date):  # type: ignore[no-untyped-def]
@@ -70,11 +73,14 @@ class MemoryReader:
         return (q.site_id is None or site == q.site_id) and (q.meter_id is None or meter == q.meter_id)
 
     async def series(self, query: SeriesQuery) -> list[Point]:
-        rng, out = query.range, defaultdict(float)
+        rng = query.range
+        out: defaultdict[datetime | date, float] = defaultdict(float)
         if query.granularity == Granularity.HOUR:
+            hours: defaultdict[datetime, float] = defaultdict(float)
             for (s, m, h), kwh in self._d.hourly.items():
-                if rng.start <= h.date() <= rng.end and self._match(s, m, query):
-                    out[h] += kwh
+                if rng.start <= h.astimezone(self._d.tz).date() <= rng.end and self._match(s, m, query):
+                    hours[h] += kwh
+            return [Point(h.astimezone(self._d.tz), v) for h, v in sorted(hours.items())]
         else:
             for (s, m, d), kwh in self._d.daily.items():
                 if rng.start <= d <= rng.end and self._match(s, m, query):

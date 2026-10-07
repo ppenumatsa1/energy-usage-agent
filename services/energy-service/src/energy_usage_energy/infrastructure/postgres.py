@@ -7,9 +7,10 @@ application layer and adapters never see psycopg exceptions."""
 import logging
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from datetime import date
+from datetime import date, timezone
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import psycopg
 from psycopg import AsyncConnection
@@ -89,6 +90,14 @@ class PgUsageReader:
         if query.granularity == Granularity.HOUR:
             params |= {"tz": rng.tz, "start_utc": rng.start_utc, "end_utc": rng.end_utc}
             rows = await self._fetch(queries.SERIES_HOURLY, params)
+            tz = ZoneInfo(rng.tz)
+            return [
+                Point(
+                    period=r["local_hour"].replace(tzinfo=timezone(r["utc_offset"])).astimezone(tz),
+                    kwh=r["kwh"],
+                )
+                for r in rows
+            ]
         else:
             params |= {"unit": query.granularity.value, "start": rng.start, "end": rng.end}
             rows = await self._fetch(queries.SERIES_DAILY, params)

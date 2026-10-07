@@ -75,7 +75,7 @@ energy-usage-agent/
 │                                     # run_evals.py, preflight.py, verify_deployment.py, setup_ci.py
 └── infra/
     ├── main.bicep, main.parameters.json, README.md
-    └── modules/                      # monitoring, registry, keyvault, identity, postgres, foundry, aca-env, container-app
+    └── modules/                      # monitoring, registry, identity, postgres, foundry, aca-env, container-app
 ```
 
 ## Ownership rules
@@ -101,5 +101,5 @@ energy-usage-agent/
   - No customer or company names, people's names, emails, or meeting/email notes.
   - No tenant, subscription or resource IDs, and no real usage data.
   - Use generic terms ("customer", "operator", "tenant A/B") and synthetic data only.
-  - Environment-specific values come from azd environments or Key Vault, which are not committed.
+  - Environment-specific values come from azd environments, which are not committed.
   - CI runs a check against a denylist that is kept outside the repo (a CI secret), so the denylist itself never lands in the repo.

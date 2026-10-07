@@ -17,6 +17,8 @@ class ServiceSettings(BaseSettings):
     auth_audience: str = ""
     auth_tenant_id: str = ""  # the home tenant; external users are B2B guests in it
     auth_required_scope: str = ""
+    # Comma-separated client (app) IDs allowed to call this API (token `azp`/`appid`). Required for Entra auth.
+    auth_allowed_client_ids: str = ""
     dev_jwt_secret: str | None = None
 
     @model_validator(mode="after")

@@ -24,15 +24,18 @@ GROUP BY 1 ORDER BY 1
 """
 )
 
+# Grouped by local hour and UTC offset: on the DST fall-back day the repeated local hour stays two rows.
 SERIES_HOURLY = (
     """
-SELECT date_trunc('hour', r.ts AT TIME ZONE %(tz)s) AS period, sum(r.kwh)::float8 AS kwh
+SELECT date_trunc('hour', r.ts AT TIME ZONE %(tz)s) AS local_hour,
+       (r.ts AT TIME ZONE %(tz)s) - (r.ts AT TIME ZONE 'UTC') AS utc_offset,
+       sum(r.kwh)::float8 AS kwh
 FROM energy.usage_readings r
 JOIN energy.meters m ON m.meter_id = r.meter_id
 WHERE r.ts >= %(start_utc)s AND r.ts < %(end_utc)s"""
     + _FILTERS.format(alias="m.")
     + """
-GROUP BY 1 ORDER BY 1
+GROUP BY 1, 2 ORDER BY min(r.ts)
 """
 )
 

@@ -27,6 +27,14 @@ dev = [
     "ruff>=0.6",
 ]
 
+[tool.mypy]
+python_version = "3.12"
+files = ["shared/src", "services/app-api/src", "services/energy-service/src"]
+
+[[tool.mypy.overrides]]
+module = ["msal"]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 110
 target-version = "py312"

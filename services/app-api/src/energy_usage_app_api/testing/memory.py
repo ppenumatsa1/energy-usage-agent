@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -34,7 +35,7 @@ class MemoryConversationStore:
                 rec, agent_conversation_id=agent_conversation_id, updated_at=datetime.now(UTC)
             )
 
-    async def list(self, tid: str, oid: str, limit: int = 50) -> list[ConversationRecord]:
+    async def list(self, tid: str, oid: str, limit: int = 50) -> builtins.list[ConversationRecord]:
         mine = [
             replace(r, turn_count=len(self._turns.get(r.conversation_id, [])))
             for r in self._items.values()
@@ -53,10 +54,10 @@ class MemoryConversationStore:
         self._turns.setdefault(conversation_id, []).append(turn)
         await self.touch(conversation_id)
 
-    async def turns(self, conversation_id: UUID) -> list[StoredTurn]:
+    async def turns(self, conversation_id: UUID) -> builtins.list[StoredTurn]:
         return list(self._turns.get(conversation_id, []))
 
-    async def purge(self, before: datetime, limit: int) -> list[ConversationRecord]:
+    async def purge(self, before: datetime, limit: int) -> builtins.list[ConversationRecord]:
         expired = sorted(
             (r for r in self._items.values() if r.updated_at < before), key=lambda r: r.updated_at
         )

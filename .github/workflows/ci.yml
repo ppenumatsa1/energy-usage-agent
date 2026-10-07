@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   python:
-    name: Python (ruff + pytest)
+    name: Python (ruff + mypy + pytest)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -49,6 +49,9 @@ jobs:
 
       - name: Ruff format
         run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
 
       - name: Tests
         run: uv run pytest

@@ -28,7 +28,7 @@
 - **BR-7 Limits.**
   - `end > start`.
   - Maximum range 13 months. Longer requests are capped, and the answer says so.
-  - Hourly granularity only for ranges ≤ 31 days.
+  - Hourly granularity only for ranges ≤ 31 days. Hours are local; on the day clocks go back the repeated hour is shown twice with its zone (e.g. `01:00 CDT`, `01:00 CST`), so that day has 25 hours and the spring-forward day 23.
   - 15-minute granularity is not exposed in the POC **[OPEN]**.
   - Top-N ≤ 10.
   - At most 5 tool rounds per user turn (one round may run several tools).

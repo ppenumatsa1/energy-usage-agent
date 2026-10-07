@@ -93,6 +93,11 @@ async def test_service_end_to_end_on_postgres(database: dict[str, str]) -> None:
         assert r.rows and r.tz == "America/Chicago"
         hourly = await svc.get_usage(b1, "yesterday", "yesterday", Granularity.HOUR)
         assert 23 <= len(hourly.rows) <= 25
+        fall_back = await svc.get_usage(a1, "2025-11-02", "2025-11-02", Granularity.HOUR)
+        assert [row["period"] for row in fall_back.rows][1:3] == [
+            "2025-11-02 01:00 CDT",
+            "2025-11-02 01:00 CST",
+        ]
         sites = await svc.list_sites_and_meters(b1)
         assert {row["site_id"] for row in sites.rows} == {"S-301"}
         with pytest.raises(InvalidArgument):

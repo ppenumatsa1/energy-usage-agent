@@ -12,7 +12,7 @@ AUD = "api://app-api"
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
-def _token(tid: str, scp: str = "Chat.Ask", iss: str | None = None) -> str:
+def _token(tid: str, scp: str = "Chat.Ask", iss: str | None = None, azp: str = "web-client") -> str:
     now = int(time.time())
     claims = {
         "aud": AUD,
@@ -22,6 +22,7 @@ def _token(tid: str, scp: str = "Chat.Ask", iss: str | None = None) -> str:
         "tid": tid,
         "oid": "user-1",
         "scp": scp,
+        "azp": azp,
     }
     return jwt.encode(claims, KEY, algorithm="RS256")
 
@@ -30,7 +31,7 @@ HOME = "home-tenant"
 
 
 def _validator() -> EntraTokenValidator:
-    v = EntraTokenValidator(AUD, HOME, "Chat.Ask")
+    v = EntraTokenValidator(AUD, HOME, "Chat.Ask", frozenset({"web-client"}))
     v._jwks = SimpleNamespace(get_signing_key_from_jwt=lambda _t: SimpleNamespace(key=KEY.public_key()))  # type: ignore[assignment]
     return v
 
@@ -59,4 +60,12 @@ def test_scope_still_required() -> None:
 
 def test_tenant_is_required() -> None:
     with pytest.raises(ValueError):
-        EntraTokenValidator(AUD, "", "Chat.Ask")
+        EntraTokenValidator(AUD, "", "Chat.Ask", frozenset({"web-client"}))
+    with pytest.raises(ValueError):
+        EntraTokenValidator(AUD, HOME, "Chat.Ask", frozenset())
+
+
+def test_rejects_client_not_allowed() -> None:
+    with pytest.raises(AuthError) as exc:
+        _validator().validate(_token(HOME, azp="some-other-client"))
+    assert exc.value.reason == "client_not_allowed"

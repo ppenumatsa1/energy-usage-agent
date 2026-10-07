@@ -47,6 +47,7 @@ Read `README.md`, then `docs/architecture.md` and `docs/business-rules.md` (the 
 ## Before you finish
 ```sh
 uv run ruff check --fix . && uv run ruff format .
+uv run mypy
 uv run pytest
 (cd frontend && npm run lint && npm test)
 ```

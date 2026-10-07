@@ -43,9 +43,14 @@ class EntraTokenValidator:
     Guests the tenant admin has invited get home-tenant tokens too.
     """
 
-    def __init__(self, audience: str, tenant_id: str, required_scope: str) -> None:
-        if not audience or not tenant_id:
-            raise ValueError("AUTH_AUDIENCE and AUTH_TENANT_ID are required for Entra auth")
+    def __init__(
+        self, audience: str, tenant_id: str, required_scope: str, allowed_client_ids: frozenset[str]
+    ) -> None:
+        if not audience or not tenant_id or not allowed_client_ids:
+            raise ValueError(
+                "AUTH_AUDIENCE, AUTH_TENANT_ID and AUTH_ALLOWED_CLIENT_IDS are required for Entra auth"
+            )
+        self._clients = frozenset(c.lower() for c in allowed_client_ids)
         self._audiences = [audience] if audience.startswith("api://") else [audience, f"api://{audience}"]
         self._tenant = tenant_id.lower()
         self._issuers = [f"{ENTRA_LOGIN}/{self._tenant}/v2.0", f"https://sts.windows.net/{self._tenant}/"]
@@ -70,6 +75,9 @@ class EntraTokenValidator:
             raise AuthError(f"invalid_token:{type(exc).__name__}") from exc
         if str(claims.get("tid", "")).lower() != self._tenant:
             raise AuthError("wrong_tenant")
+        # Pre-authorization only skips consent; any client a user consents to could still get a token.
+        if str(claims.get("azp") or claims.get("appid") or "").lower() not in self._clients:
+            raise AuthError("client_not_allowed")
         return _principal_from_claims(claims, self._scope, token)
 
 
@@ -102,7 +110,10 @@ def build_validator(settings: ServiceSettings) -> TokenValidator:
         return DevTokenValidator(
             settings.dev_jwt_secret, settings.auth_audience, settings.auth_required_scope
         )
-    return EntraTokenValidator(settings.auth_audience, settings.auth_tenant_id, settings.auth_required_scope)
+    clients = frozenset(c.strip() for c in settings.auth_allowed_client_ids.split(",") if c.strip())
+    return EntraTokenValidator(
+        settings.auth_audience, settings.auth_tenant_id, settings.auth_required_scope, clients
+    )
 
 
 def token_expiry(token: str) -> float:

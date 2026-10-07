@@ -45,8 +45,9 @@ def _plan(message: str) -> tuple[str, dict[str, Any]] | None:
 
 def _answer(call: ToolCall) -> AgentOutput:
     if call.error:
-        status = "no_data" if call.error.code == "no_data" else "clarify"
-        return AgentOutput(answer=call.error.message, status=status)
+        if call.error.code == "no_data":
+            return AgentOutput(answer=call.error.message, status="no_data")
+        return AgentOutput(answer=call.error.message, status="clarify")
     r = call.result
     assert r is not None
     s = r.summary
@@ -86,3 +87,6 @@ class FakeAgentRunner:
 
     async def forget(self, agent_conversation_id: str) -> None:
         return None
+
+    async def ready(self) -> bool:
+        return True

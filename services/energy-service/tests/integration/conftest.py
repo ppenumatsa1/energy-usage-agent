@@ -3,7 +3,7 @@
 import os
 import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import psycopg
@@ -16,6 +16,7 @@ MIGRATIONS = Path(__file__).resolve().parents[2] / "migrations"
 LOGIN = "energy_it_login"
 LOGIN_PASSWORD = "it-only-password"  # noqa: S105 - throwaway role in a throwaway database
 SEED_DAYS = 40
+DST_FALL_BACK = date(2025, 11, 2)  # also seeded, for the repeated-hour test
 
 
 @pytest.fixture(scope="session")
@@ -80,8 +81,9 @@ def _seed(c: psycopg.Connection) -> None:
                     (m.meter_id, cust.customer_id, site.site_id, m.name, m.type),
                 )
         with c.cursor().copy("COPY energy.usage_readings (customer_id, meter_id, ts, kwh) FROM STDIN") as cp:
-            for _s, meter_id, ts, kwh in iter_readings(cust, start, end, step_minutes=60):
-                cp.write_row((cust.customer_id, meter_id, ts, kwh))
+            for first, last in ((start, end), (DST_FALL_BACK, DST_FALL_BACK)):
+                for _s, meter_id, ts, kwh in iter_readings(cust, first, last, step_minutes=60):
+                    cp.write_row((cust.customer_id, meter_id, ts, kwh))
     c.execute(
         """INSERT INTO energy.usage_daily
            SELECT r.customer_id, m.site_id, r.meter_id, (r.ts AT TIME ZONE cu.timezone)::date, sum(r.kwh)

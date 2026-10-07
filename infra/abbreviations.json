@@ -6,7 +6,6 @@
   "containerRegistryRegistries": "cr",
   "dBforPostgreSQLServers": "psql-",
   "insightsComponents": "appi-",
-  "keyVaultVaults": "kv-",
   "managedIdentityUserAssignedIdentities": "id-",
   "operationalInsightsWorkspaces": "log-",
   "resourcesResourceGroups": "rg-"

@@ -107,16 +107,6 @@ module registry 'modules/registry.bicep' = {
   }
 }
 
-module keyVault 'modules/keyvault.bicep' = {
-  name: 'keyvault'
-  scope: rg
-  params: {
-    name: '${abbrs.keyVaultVaults}${resourceToken}'
-    location: location
-    tags: tags
-  }
-}
-
 module webIdentity 'modules/identity.bicep' = {
   name: 'identity-web'
   scope: rg
@@ -253,6 +243,7 @@ module energyService 'modules/container-app.bicep' = {
       { name: 'AUTH_AUDIENCE', value: entra.outputs.energyServiceAppId }
       { name: 'AUTH_TENANT_ID', value: tenant().tenantId }
       { name: 'AUTH_REQUIRED_SCOPE', value: 'Energy.Read' }
+      { name: 'AUTH_ALLOWED_CLIENT_IDS', value: entra.outputs.appApiAppId }
       { name: 'DB_HOST', value: postgres.outputs.fqdn }
       { name: 'DB_NAME', value: databaseName }
       { name: 'DB_USER', value: energyServiceIdentity.outputs.name }
@@ -283,6 +274,7 @@ module appApi 'modules/container-app.bicep' = {
       { name: 'AUTH_AUDIENCE', value: entra.outputs.appApiAppId }
       { name: 'AUTH_TENANT_ID', value: tenant().tenantId }
       { name: 'AUTH_REQUIRED_SCOPE', value: 'Chat.Ask' }
+      { name: 'AUTH_ALLOWED_CLIENT_IDS', value: entra.outputs.appApiClientIds }
       { name: 'ENERGY_SERVICE_URL', value: energyService.outputs.uri }
       { name: 'ENERGY_SERVICE_SCOPE', value: entra.outputs.energyServiceScope }
       { name: 'ENTRA_CLIENT_ID', value: entra.outputs.appApiAppId }
@@ -354,7 +346,6 @@ output APP_API_IDENTITY_PRINCIPAL_ID string = appApiIdentity.outputs.principalId
 output APP_API_URL string = appApi.outputs.uri
 output ENERGY_SERVICE_URL string = energyService.outputs.uri
 output FRONTEND_URL string = web.outputs.uri
-output KEY_VAULT_NAME string = keyVault.outputs.name
 output WEB_APP_ID string = entra.outputs.webAppId
 output APP_API_APP_ID string = entra.outputs.appApiAppId
 output ENERGY_SERVICE_APP_ID string = entra.outputs.energyServiceAppId

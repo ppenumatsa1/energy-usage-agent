@@ -80,7 +80,7 @@ Steps 3–6 repeat for at most 5 rounds. Full design: [architecture](docs/archit
 | [`services/energy-service/`](services/energy-service) | Python 3.12, FastAPI, FastMCP | One core with two adapters, REST `/v1` and MCP `/mcp`. Customer mapping, date and input rules, scoped SQL, audit |
 | [`agent/`](agent) | Foundry prompt agent (YAML + JSON) | Instructions, 6 tool specs, output schema, eval policy and golden set. A deploy artifact, no runtime code |
 | [`shared/`](shared) | Python package | Auth validators, contracts, problem details, settings, telemetry |
-| [`infra/`](infra/README.md) | Bicep, azd | Container Apps, Foundry (project + model), PostgreSQL Flexible Server, App Insights, ACR, Key Vault, managed identities |
+| [`infra/`](infra/README.md) | Bicep, azd | Container Apps, Foundry (project + model), PostgreSQL Flexible Server, App Insights, ACR, managed identities |
 | [`scripts/`](scripts) | Python | Local dev, migrations, seed, user mapping, preflight, agent deploy, smoke, evals, deploy verification, CI setup |
 
 Agent tools: `list_sites_and_meters`, `get_usage`, `get_usage_breakdown`, `compare_usage`, `get_peak_usage`, `get_data_coverage`.
@@ -121,7 +121,7 @@ Locally the agent is a keyword-based **fake** (answers start with `[fake agent]`
 
 ## Test
 ```sh
-uv run ruff check . && uv run ruff format --check .
+uv run ruff check . && uv run ruff format --check . && uv run mypy
 uv run pytest                                   # unit, API, MCP, RLS on Postgres, full stack, architecture
 (cd frontend && npm run lint && npm test && npm run build)
 ```
@@ -154,7 +154,7 @@ azd up
 | Step | What | Where |
 |---|---|---|
 | 1. Preflight | Checks app-registration rights and model quota; records you as Postgres admin and your IP for the firewall | `scripts/preflight.py` (preprovision hook) |
-| 2. Infra | Resource group, Foundry + model, Postgres, Container Apps, App Insights, Key Vault | `infra/main.bicep` |
+| 2. Infra | Resource group, Foundry + model, Postgres, Container Apps, App Insights | `infra/main.bicep` |
 | 3. App registrations | 3 single-tenant apps, scopes, pre-authorizations, app-api federated credential | `infra/modules/entra.bicep` (Microsoft Graph Bicep) |
 | 4. Data | Schema, RLS, roles, synthetic seed; maps **you** to the first demo customer | `migrate.py`, `seed.py`, `map_user.py --me` (postprovision hook) |
 | 5. Apps + agent | Builds and deploys the 3 services; publishes the Foundry agent version | `azd deploy`, `deploy_agent.py` |

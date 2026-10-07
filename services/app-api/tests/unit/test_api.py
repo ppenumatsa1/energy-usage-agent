@@ -210,3 +210,14 @@ async def test_sse_client_disconnect_is_logged_as_cancelled(caplog) -> None:  # 
     cancelled = [r for r in caplog.records if r.message == "chat_cancelled"]
     assert cancelled and cancelled[0].levelno == logging.INFO and cancelled[0].correlation_id == "cid-123"
     assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+
+
+class UnreachableAgent(FakeAgentRunner):
+    async def ready(self) -> bool:
+        return False
+
+
+def test_status_reports_agent_down(client_factory, auth) -> None:  # type: ignore[no-untyped-def]
+    with client_factory(agent=UnreachableAgent()) as c:
+        status = c.get("/api/status", headers=auth("a1")).json()
+    assert {s["id"]: s["status"] for s in status["components"]}["agent"] == "down"

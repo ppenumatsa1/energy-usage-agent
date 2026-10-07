@@ -3,6 +3,7 @@ Connection problems (server down, pool timeout) become UpstreamUnavailable (503)
 
 from __future__ import annotations
 
+import builtins
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -85,7 +86,7 @@ class PgConversationStore:
                 (agent_conversation_id, datetime.now(UTC), conversation_id),
             )
 
-    async def list(self, tid: str, oid: str, limit: int = 50) -> list[ConversationRecord]:
+    async def list(self, tid: str, oid: str, limit: int = 50) -> builtins.list[ConversationRecord]:
         async with self._connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
             await cur.execute(
@@ -114,7 +115,7 @@ class PgConversationStore:
                 (datetime.now(UTC), conversation_id),
             )
 
-    async def turns(self, conversation_id: UUID) -> list[StoredTurn]:
+    async def turns(self, conversation_id: UUID) -> builtins.list[StoredTurn]:
         """Callers check ownership with get() first."""
         async with self._connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
@@ -124,7 +125,7 @@ class PgConversationStore:
             )
             return [StoredTurn(r["question"], r["response"]) for r in await cur.fetchall()]
 
-    async def purge(self, before: datetime, limit: int) -> list[ConversationRecord]:
+    async def purge(self, before: datetime, limit: int) -> builtins.list[ConversationRecord]:
         # SKIP LOCKED: replicas purging at the same time take disjoint rows instead of waiting.
         async with self._connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
