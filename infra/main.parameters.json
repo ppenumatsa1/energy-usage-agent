@@ -11,6 +11,9 @@
     "aiLocation": {
       "value": "${AZURE_AI_LOCATION=}"
     },
+    "postgresLocation": {
+      "value": "${AZURE_POSTGRES_LOCATION=}"
+    },
     "principalId": {
       "value": "${AZURE_PRINCIPAL_ID}"
     },

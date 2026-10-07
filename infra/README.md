@@ -35,6 +35,7 @@ Set them with `azd env set <NAME> <value>`. `main.parameters.json` maps each one
 | `AZURE_PRINCIPAL_TYPE` | `principalType` | auto | `User` (provisioning is done by a person). Set by `scripts/preflight.py` |
 | `CLIENT_IP_ADDRESS` | `clientIpAddress` | auto | The deployer's public IPv4, for the Postgres firewall rule. Set by `scripts/preflight.py` |
 | `AZURE_AI_LOCATION` | `aiLocation` | no | Foundry region override when the model isn't available in `AZURE_LOCATION` |
+| `AZURE_POSTGRES_LOCATION` | `postgresLocation` | no | Postgres region override. Use it when provisioning fails on Postgres with `SkuNotAvailable` (the region has no Burstable capacity for new servers; preflight can't detect this). The apps reach it across regions |
 | `AZURE_PIPELINE_PRINCIPAL_ID` | `pipelinePrincipalId` | no | Object ID of the CI identity; gets Azure AI User on Foundry so CI can publish the agent. Set by `scripts/setup_ci.py` |
 | `ENTRA_PREAUTHORIZE_AZURE_CLI` | `preauthorizeAzureCli` | no | Default `true`: the Azure CLI may get user tokens for `Chat.Ask` and app-api accepts them (`AUTH_ALLOWED_CLIENT_IDS`), so scripts and the post-deploy verify can test as you. Set `false` outside dev (then run smoke/evals with a token from the web app) |
 | `AZURE_AI_MODEL_NAME` / `_VERSION` / `_SKU` / `_CAPACITY` | `modelName` / `modelVersion` / `modelSkuName` / `modelCapacity` | no | Defaults `gpt-5.6-luna` / `2026-07-09` / `GlobalStandard` / `30` (K TPM). Check quota first |

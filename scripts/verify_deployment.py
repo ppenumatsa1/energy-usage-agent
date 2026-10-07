@@ -47,6 +47,22 @@ def user_token(scope: str) -> str | None:
     return out.stdout.strip()
 
 
+def wait_until_up(http: httpx.Client, timeout: int) -> bool:
+    """A fresh environment's first revision can take minutes to answer; wait instead of failing on a timeout."""
+    deadline, last = time.monotonic() + timeout, ""
+    while time.monotonic() < deadline:
+        try:
+            r = http.get("/", timeout=15)
+            if r.status_code == 200:
+                return True
+            last = str(r.status_code)
+        except httpx.HTTPError as e:
+            last = type(e).__name__
+        print(f"WAIT  web not ready ({last}); retrying", flush=True)
+        time.sleep(10)
+    return check("GET / (web)", False, f"not ready after {timeout}s: {last}")
+
+
 def no_user_checks(http: httpx.Client, env: dict[str, str]) -> list[bool]:
     results = [check("GET / (web)", http.get("/").status_code == 200)]
     config = http.get("/config.json").json()
@@ -102,6 +118,9 @@ def main() -> int:
     p.add_argument(
         "--telemetry-timeout", type=int, default=300, help="Seconds to wait for App Insights ingestion."
     )
+    p.add_argument(
+        "--ready-timeout", type=int, default=300, help="Seconds to wait for the web app to answer."
+    )
     a = p.parse_args()
 
     env = azd_env()
@@ -112,6 +131,9 @@ def main() -> int:
     since = datetime.now(UTC).isoformat()
 
     with httpx.Client(base_url=base.rstrip("/"), timeout=60) as http:
+        if not wait_until_up(http, a.ready_timeout):
+            print("\nverify: web never became ready")
+            return 1
         results = no_user_checks(http, env)
 
     token = user_token(scope)

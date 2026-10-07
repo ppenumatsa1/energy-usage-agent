@@ -15,6 +15,9 @@ param location string
 @description('Optional location override for the Foundry account (model availability differs by region). Empty = location.')
 param aiLocation string = ''
 
+@description('Optional location override for PostgreSQL (regions can run out of Burstable capacity: SkuNotAvailable). Empty = location.')
+param postgresLocation string = ''
+
 // ---------------------------------------------------------------------------
 // Deployer (becomes Postgres Entra admin and gets Azure AI User on Foundry)
 // ---------------------------------------------------------------------------
@@ -144,8 +147,9 @@ module postgres 'modules/postgres.bicep' = {
   name: 'postgres'
   scope: rg
   params: {
-    name: '${abbrs.dBforPostgreSQLServers}${resourceToken}'
-    location: location
+    // An override gets its own name: a server that failed in the first region can block the name there.
+    name: empty(postgresLocation) ? '${abbrs.dBforPostgreSQLServers}${resourceToken}' : '${abbrs.dBforPostgreSQLServers}${resourceToken}-${postgresLocation}'
+    location: empty(postgresLocation) ? location : postgresLocation
     tags: tags
     databaseName: databaseName
     adminPrincipalId: principalId

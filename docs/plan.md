@@ -27,7 +27,7 @@ Specs first, then structure, then build. Implementation approved and started on 
 | app-api (chat JSON/SSE, OBO, Foundry loop, projections, conversations + stored history, trace, status) | Done | unit + API tests; full-stack test through real MCP; local smoke |
 | web (React, MSAL + dev sign-in, table/chart) | Done | eslint, vitest, build; local proxy smoke |
 | agent/ (instructions, tools, output schema, golden set) | Done (agent v3 in Foundry) | contract tests; golden set 14/14 deterministic, Foundry judges ≥ 10/14 except tool call accuracy 7/10 |
-| Azure dev environment | Deployed | `azd up` end to end with no manual steps; verify 6/6 (endpoints, smoke, evals, App Insights trace); Playwright E2E 3/3; guest sign-in; probes not traced |
+| Azure dev environment | Deployed (rebuilt from scratch 2026-10-07, Postgres in centralus) | `azd up` end to end with no manual steps; verify 6/6 (endpoints, smoke, evals, App Insights trace); Playwright E2E 3/3; guest sign-in; probes not traced |
 | infra (Bicep incl. Entra app registrations, azd hooks) + CI/CD | Deployed (dev) | `azd provision`/`azd deploy` with all hooks; CI deploy path (fresh env + `azd env refresh` + `azd deploy`) simulated locally; workflow + `setup_ci.py` not yet run in GitHub |
 | Scripts (local DB, migrate, seed, map user, dev token, dev, smoke, sync, deploy agent, evals, preflight, verify, CI setup) | Done | used in the local run and the Azure deployment |
 
@@ -72,7 +72,7 @@ Specs first, then structure, then build. Implementation approved and started on 
 
 ## Next steps
 1. CI: pushed to GitHub (CI workflow green; Deploy skipped until set up); run `scripts/setup_ci.py`, first deploy run; decide how CI gets a user token for smoke/evals (`VERIFY_TOKEN`); add the `CUSTOMER_DENYLIST` secret.
-2. Prove the from-scratch install in a fresh environment by following `AGENTS.md` (`azd env new` + `azd up --no-prompt`), then `azd down --purge`; automate app-registration cleanup (a `postdown` hook) so teardown has no manual step.
+2. ~~Prove the from-scratch install~~: done 2026-10-07 (old env torn down with `azd down --purge` + app registrations deleted; new env from the docs only; verify 6/6, E2E 3/3, full evals, App Insights + Foundry traces). Found and fixed: Postgres `SkuNotAvailable` in eastus2 (`AZURE_POSTGRES_LOCATION`), verify not waiting for a fresh web app. Still open: automate app-registration cleanup (a `postdown` hook) so teardown has no manual step.
 3. Evals: add custom judges that understand refusals/clarifications (built-in judges reward fulfilling any request); grow the golden set from production traces.
 4. Remove the tracing workaround when azure-ai-projects checks `is_recording()` itself.
 5. Hardening: rate limit store for >1 replica, private networking (below). (Review fixes P0–P2, error handling, Key Vault removal done 2026-10-07.)

@@ -163,6 +163,13 @@ azd up
 
 Then open `FRONTEND_URL` (`azd env get-value FRONTEND_URL`) and sign in.
 
+If it fails:
+| Error | Fix, then run `azd up` again |
+|---|---|
+| Preflight: model quota or model not in region | `azd env set AZURE_AI_LOCATION <region>` (or lower `AZURE_AI_MODEL_CAPACITY`) |
+| Provision: Postgres `SkuNotAvailable` | The region has no Burstable capacity for new servers: `azd env set AZURE_POSTGRES_LOCATION <region>` (for example `centralus`) |
+| Anything transient | Just re-run; every step is idempotent |
+
 Give other people access (members, or guests your tenant admin already invited):
 ```sh
 uv run python scripts/map_user.py --azure --tid <tenant-id> --oid <user-object-id> --customer-id <seeded-customer-id>
