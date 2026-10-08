@@ -195,6 +195,7 @@ Day-2 changes (measured on dev):
 | Code, all services | `uv run python scripts/deploy_parallel.py` | ~2 min |
 | Code, one service | `azd deploy <service>` | 1–3 min |
 | Agent definition | `uv run python scripts/deploy_agent.py` (skips when unchanged) | ~2 s |
+| Demo data stale after the environment sat idle ("yesterday" says no data) | `uv run python scripts/seed.py --azure` (tops up to yesterday) | ~7 s |
 
 Details (parameters, app registrations, sign-in, CI): [infra/README.md](infra/README.md).
 
